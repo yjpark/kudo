@@ -1,10 +1,11 @@
 # RFC-0003: Kinora Bootstrap
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2026-04-10
-- **Updated**: 2026-04-16
+- **Updated**: 2026-04-18
 - **Project**: Kudo (edger-dev/kudo)
 - **Components**: Kinora
+- **Implementation**: [edger-dev/kinora](https://github.com/edger-dev/kinora) — bootstrap tracked in bean `kinora-w7w0`; decisions in `kinora-fhw1`
 
 ## Summary
 
@@ -147,12 +148,63 @@ The RFCs themselves (including this one) become the first content managed by the
 
 6. **Lifecycle mirrors Git** — Kinora does not invent its own commit mechanism. The kino lifecycle (sketch → staged → committed) maps directly to Git's state machine (untracked → staged → committed), and draft status is an orthogonal metadata dimension.
 
-## Open Questions
+## Resolved Decisions
 
-- Hash algorithm choice — needs to align with RFC-0001's Moco data model decision
-- Ledger format — structured text (one entry per line, tab-separated fields), JSON lines, or something else?
-- Kinograph format — how to express references to content hashes in a way that is both human-readable and machine-parseable
-- Conflict handling — when two people append to the ledger concurrently in different Git branches, how does merge work? (Append-only makes this simpler but not trivial)
-- Should the CLI be a standalone tool or part of a broader Kinora crate from the start?
-- Link format — how kinos reference other kinos (by name? by hash? by both?) and how bidirectional links are tracked
-- Cache path convention — how `<project>` is derived for `~/.cache/kinora/<project>/` (repo name? configurable?)
+The open questions raised during drafting were resolved through a collaborative brainstorming session. Each decision is recorded below in summary; the full rationale lives in the kinora repo as bean [`kinora-fhw1`](https://github.com/edger-dev/kinora).
+
+### Hash algorithm
+
+**BLAKE3**, plain hash mode (unkeyed), 32-byte output encoded as 64-char lowercase hex. Content store path shards by first 2 hex chars: `.kinora/store/aa/aabb…`.
+
+*Why:* Stable public spec, first-class Rust support, WASM/no-std friendly, optimized for tree hashing. Since Kinora ships its own CLI, `sha256sum` ubiquity is less critical.
+
+### Ledger format
+
+**JSONL** on disk — one JSON event per line, append-only. **facet** (not serde) for internal serialization.
+
+File layout is a directory of per-lineage files under `.kinora/ledger/`, with content-addressed filenames (`<shorthash>.jsonl` = first 8 hex of BLAKE3 of that lineage's first event). No privileged trunk. First `store` on a new git branch mints a new lineage file; `.kinora/HEAD` tracks the current lineage.
+
+*Why:* Line-oriented format fits append-only and is universally recoverable. Per-lineage files make git merges structurally conflict-free (all merges are additive file changes). Content-addressed filenames match Kinora's ethos and avoid branch-name coupling.
+
+### Kinograph format and kino model
+
+A kino is a triple: **identity** (immutable BLAKE3 of first content version), **version** (content hash), **metadata** (latest-wins per field). Name is metadata, not identity — no uniqueness enforcement.
+
+The version DAG uses `parents[]` that may cross identities, unifying linear history, forks, detach (new id with cross-identity parent), and combine (new id with multiple cross-identity parents) without new event kinds.
+
+Kinographs are styx documents with an `entries[]` list; each entry is `{id, name?, pin?, note?}` — id authoritative, name a non-authoritative hint, pin optionally freezes to a specific version.
+
+A namespace convention applies to metadata keys, ledger event `kind`, and kinograph entry kinds: bare names are Kinora-reserved; extensions use `prefix::name` (e.g. `kudo::diagram`). Writes are strict (reject unknown bare names); reads are permissive (preserve unknown namespaced names).
+
+### Conflict handling
+
+Ledger file merges are structurally conflict-free by construction (per-lineage files). Version DAG forks are detected at `resolve` time: branch-aware resolution picks the head whose lineage descends from HEAD; otherwise the tool refuses and reports both heads with reconcile options.
+
+Reconciliation is just a regular version event with multiple `parents[]` — no new `kind`. Metadata merges per-field with timestamp-latest wins; events carry only changed fields; `null` removes a field. Timestamps are RFC3339 UTC; no clock-skew handling in MVP.
+
+Out of scope for MVP: CRDT-style per-element merging, logical clocks, interactive reconcile UX.
+
+### CLI packaging
+
+Two-crate workspace: `kinora` (library — store, ledger, kinograph, resolve, render logic) and `kinora-cli` (thin binary wrapper; binary named `kinora` via `[[bin]] name`).
+
+*Why:* Clean library boundary from day one; CLI-only dependencies don't pollute library consumers. Finer-grained splits remain possible later as mechanical, non-breaking refactors.
+
+### Link format
+
+Two link venues by authoring intent:
+
+- **In-content (strong) links** are part of the content hash and parsed by the kind-specific renderer. Kinograph `entries[]` for composition; markdown uses native reference-link syntax with `kino://<id>/` URLs — no Kinora-specific syntax invented.
+- **In-metadata (weak) links** live at `metadata.links: [{type, id, name?, pin?, note?}]`; queryable and backlinkable.
+
+The ledger event `kind` names the content type directly. Bare kinds are Kinora core (`markdown`, `text`, `binary`, `kinograph`); extensions are namespaced (`kudo::diagram`, `user::sketch`). MVP implements renderers for `markdown` and `kinograph`; `text`/`binary` are storeable but opaque.
+
+Backlinks are derived (ledger scan + content parse), indexed in the cache layer post-bootstrap.
+
+### Cache path convention
+
+`~/.cache/kinora/<shorthash>-<name>/` where `shorthash` = first 8 hex of `BLAKE3(normalized-repo-url)` and `name` = last path segment of the normalized URL, sanitized to `[a-z0-9_-]`.
+
+The project's `.kinora/config.styx` has a single required field: `repo-url`. URL normalization strips scheme, user-info, `.git`, and trailing slash; converts SSH `:` to `/`; lowercases host (path preserved). `kinora init` auto-fills `repo-url` from `git remote get-url origin` when available.
+
+*Why:* Repo URL is the canonical project identity — multiple clones share cache, different projects with the same basename don't collide. Nix-style `<hash>-<name>` gives a readable-but-unambiguous path.
