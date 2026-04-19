@@ -2,10 +2,10 @@
 
 - **Status**: Accepted
 - **Created**: 2026-04-10
-- **Updated**: 2026-04-18
+- **Updated**: 2026-04-19
 - **Project**: Kudo (edger-dev/kudo)
 - **Components**: Kinora
-- **Implementation**: [edger-dev/kinora](https://github.com/edger-dev/kinora) — bootstrap tracked in bean `kinora-w7w0`; decisions in `kinora-fhw1`
+- **Implementation**: [edger-dev/kinora](https://github.com/edger-dev/kinora) — bootstrap tracked in bean `kinora-w7w0`; decisions in `kinora-fhw1`; post-bootstrap architecture in `kinora-xi21`
 
 ## Summary
 
@@ -147,6 +147,66 @@ The RFCs themselves (including this one) become the first content managed by the
 5. **Rendering is always derived** — mdbook output, beans specs, and any future views are generated from the source data. They are never edited directly.
 
 6. **Lifecycle mirrors Git** — Kinora does not invent its own commit mechanism. The kino lifecycle (sketch → staged → committed) maps directly to Git's state machine (untracked → staged → committed), and draft status is an orthogonal metadata dimension.
+
+## Post-Bootstrap Evolution
+
+The bootstrap design described above (per-lineage JSONL ledger, three-command CLI) is explicitly transitional. Once the bootstrap is solid and dogfooded, the architecture evolves along the lines captured in kinora bean [`kinora-xi21`](https://github.com/edger-dev/kinora). Core principles (files-in-git as truth, content addressing, append-only, mandatory provenance, derived rendering) carry through unchanged; the storage and history shape evolves.
+
+### Four-concept model
+
+- **Kino** — identity (birth hash) + content versions. Never carries bookkeeping metadata about where it "belongs."
+- **Root** — a named, `root`-kinded kinograph whose lineage enumerates kinos under one GC/prune policy. May be Merkle-structured.
+- **Assign** — an explicit hot-ledger operation placing a kino in a root, consumed by compaction.
+- **Compaction** — promotes hot events into new root-kinograph versions and prunes aged events per root policy. Runs only on `main`.
+
+### File layout (evolved)
+
+```
+.kinora/
+  config.styx                     # named roots + policies
+  hot/<ab>/<event-hash>.jsonl     # one event per file; immutable; merge-safe
+  store/<ab>/<hash>.<ext>         # global content-addressed blobs
+  roots/<name>                    # pointer to current head of each root's lineage
+```
+
+The per-lineage `ledger/<shorthash>.jsonl` form from the bootstrap is replaced by `hot/<ab>/<event-hash>.jsonl` — one event per file. Merges of branches become set-union of files (zero JSONL conflicts by construction; no branch-name coupling). The "cold" half of the ledger is not a new file format — it is the chain of root-kinograph versions themselves, which is self-hosted in kinora's own data model.
+
+### Key shifts from bootstrap
+
+1. **History is self-hosted.** Canonical history = chain of root-kinograph snapshots. Each version references its parent(s) and enumerates its kinos. Structurally parallels git: root kinograph ≈ commit, kino blob ≈ blob, sub-kinograph ≈ tree.
+
+2. **Only `main` compacts.** Branches accumulate hot events as speculative proposals; only commits on `main` promote them into root-kinograph snapshots. Compaction aligns with git commit discipline.
+
+3. **Multiple named roots with per-root policy.** Heterogeneous data (RFCs, discussions, inbox) gets per-root GC. `inbox` is the default for unassigned kinos, with an aggressive default policy to nudge triage discipline. Each root has its own lineage and its own versioning.
+
+4. **Metadata ownership is structural.** A kino's "metadata home" is its leaf position in its owning root's Merkle tree (inlined entry with name, title, etc.). Kinographs outside any root tree (user-composed views) carry pure `{id, version}` pointers. Composition is preserved — a kino can appear in many kinographs; only ownership is exclusive.
+
+5. **Kinos never declare root membership.** Identity is the sole stable property of a kino. Relationship flows owner→owned: roots claim kinos, not the other way around. Moving between roots is a pure root-level operation, never a kino-level rewrite.
+
+6. **`root` is a reserved kind.** Joins `markdown`, `text`, `binary`, `kinograph` as a core kind; enables type-level invariant enforcement.
+
+### Post-bootstrap principles
+
+These emerge alongside the bootstrap principles and apply to the evolved architecture:
+
+7. **Self-hosting** — kinora's own history is expressed in kinora's data model. No parallel "ledger format" to maintain; the snapshot chain is itself a chain of kinographs.
+
+8. **Ownership flows owner → owned** — roots claim kinos; kinos do not declare roots. This keeps identity pure and makes reassignment a root-level operation rather than a kino rewrite.
+
+9. **Composition is exclusive in ownership, open in reference** — a kino has exactly one metadata home (its root's tree), but can be referenced from any number of kinographs. This preserves the "composition over folders" principle while giving metadata a canonical source.
+
+10. **Canonical history is a social convention on main** — like git, there is no protocol-level consensus; the sequence of root-kinograph versions reachable from `main` is the "canonical chain." Branches are proposals until merged.
+
+### Phased delivery
+
+1. Hot ledger: one-file-per-event (prerequisite; independent of root model)
+2. `root` kind + single flat root + `kinora compact`
+3. Multiple named roots + `assign` event + per-root GC
+4. Merkle sub-kinographs inside roots
+
+### What the bootstrap RFC still defines
+
+The bootstrap design (per-lineage ledger, content-addressed store, three-command CLI) remains a valid starting point — it ships first and gets dogfooded. The evolution above describes where the architecture goes *after* bootstrap proves the core model. The `Resolved Decisions` section below records what was decided at the time of the bootstrap; several items (ledger file layout, conflict handling) are superseded by the post-bootstrap evolution but remain in effect until the corresponding phase lands.
 
 ## Resolved Decisions
 
