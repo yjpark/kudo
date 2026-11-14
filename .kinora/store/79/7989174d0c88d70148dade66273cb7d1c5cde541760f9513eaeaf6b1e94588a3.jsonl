@@ -1,0 +1,3 @@
+{"@schema":"kinora-commit-archive-v1"}
+{"event_kind":"assign","kind":"kin::assign","id":"632214b79fec0b6e3f58cae1c0369fb17c9aa89454c8d8ba82bd3ea8846ccfcc","hash":"632214b79fec0b6e3f58cae1c0369fb17c9aa89454c8d8ba82bd3ea8846ccfcc","parents":[],"ts":"2026-11-14T13:56:57.870340649Z","author":"YJ Park","provenance":"design","metadata":{"kin::target_root":"inbox"}}
+{"event_kind":"store","kind":"markdown","id":"632214b79fec0b6e3f58cae1c0369fb17c9aa89454c8d8ba82bd3ea8846ccfcc","hash":"632214b79fec0b6e3f58cae1c0369fb17c9aa89454c8d8ba82bd3ea8846ccfcc","parents":[],"ts":"2026-11-14T13:56:57.870340649Z","author":"YJ Park","provenance":"design","metadata":{"kudo::designs":"88a6fbecb4c91382b8ed81e8a3026672c8a0ad3bfd8bf955c9a5e4aece1e57eb","name":"decision-jig-rust-extra-src"}}
