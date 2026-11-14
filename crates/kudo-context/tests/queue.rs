@@ -238,10 +238,10 @@ fn an_item_waits_for_every_dependency_to_submit() {
     let (store, ctx) = store_with_context();
     let first = store.enqueue(&ctx, "first", T0).unwrap();
     let second = store
-        .enqueue_with_dependencies(&ctx, "second", None, &[first.clone()], T0)
+        .enqueue_with_dependencies(&ctx, "second", None, std::slice::from_ref(&first), T0)
         .unwrap();
     let third = store
-        .enqueue_with_dependencies(&ctx, "third", None, &[second.clone()], T0)
+        .enqueue_with_dependencies(&ctx, "third", None, std::slice::from_ref(&second), T0)
         .unwrap();
 
     assert_eq!(store.ready_count(&ctx, T0).unwrap(), 1);

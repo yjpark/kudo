@@ -100,6 +100,14 @@ struct SyncState {
 /// redundant (two calls of one operation, milliseconds apart).
 const FRESH: std::time::Duration = std::time::Duration::from_millis(200);
 
+#[derive(Default)]
+struct NewItem<'a> {
+    due: Option<Now>,
+    check: Option<&'a crate::Check>,
+    snoozed_from: Option<&'a ItemId>,
+    after: &'a [ItemId],
+}
+
 /// What a failed sync means for the store.
 enum Failure {
     /// The mirror cannot be reached: work locally for a while.
@@ -338,9 +346,9 @@ impl ContextStore {
     pub fn worktree_per_lease(&self, ctx: &ContextId) -> Result<bool, Error> {
         let view = self.view()?;
         let card = view
-            .by_id
-            .get(&ctx.0)
-            .and_then(|events| events.first())
+            .cards()
+            .into_iter()
+            .find(|card| card.id == ctx.0)
             .ok_or_else(|| Error::UnknownContext(ctx.0.clone()))?;
         Ok(field(card, KIND) == "context" && field(card, WORKTREE) == "lease")
     }
@@ -916,7 +924,7 @@ impl ContextStore {
 
     /// Enqueue `ask` under the context.
     pub fn enqueue(&self, ctx: &ContextId, ask: &str, now: Now) -> Result<ItemId, Error> {
-        self.enqueue_item(ctx, ask, None, None, None, &[], now)
+        self.enqueue_item(ctx, ask, NewItem::default(), now)
     }
 
     /// Enqueue `ask`, gated by dependencies and optionally a due time.
@@ -929,7 +937,16 @@ impl ContextStore {
         after: &[ItemId],
         now: Now,
     ) -> Result<ItemId, Error> {
-        self.enqueue_item(ctx, ask, due, None, None, after, now)
+        self.enqueue_item(
+            ctx,
+            ask,
+            NewItem {
+                due,
+                after,
+                ..NewItem::default()
+            },
+            now,
+        )
     }
 
     /// Enqueue `ask`, ready at `due` (epoch seconds) or at once.
@@ -941,7 +958,15 @@ impl ContextStore {
         due: Option<Now>,
         now: Now,
     ) -> Result<ItemId, Error> {
-        self.enqueue_item(ctx, ask, due, None, None, &[], now)
+        self.enqueue_item(
+            ctx,
+            ask,
+            NewItem {
+                due,
+                ..NewItem::default()
+            },
+            now,
+        )
     }
 
     /// Enqueue a check: what to look at, its pass condition and evidence
@@ -959,22 +984,34 @@ impl ContextStore {
                 "a check needs what to look at and a pass condition".into(),
             ));
         }
-        self.enqueue_item(ctx, &check.what, due, Some(check), None, &[], now)
+        self.enqueue_item(
+            ctx,
+            &check.what,
+            NewItem {
+                due,
+                check: Some(check),
+                ..NewItem::default()
+            },
+            now,
+        )
     }
 
     fn enqueue_item(
         &self,
         ctx: &ContextId,
         ask: &str,
-        due: Option<Now>,
-        check: Option<&crate::Check>,
-        snoozed_from: Option<&ItemId>,
-        after: &[ItemId],
+        options: NewItem<'_>,
         now: Now,
     ) -> Result<ItemId, Error> {
         let view = self.view()?;
         view.require_context(ctx)?;
-        view.validate_dependencies(ctx, after, None)?;
+        view.validate_dependencies(ctx, options.after, None)?;
+        let NewItem {
+            due,
+            check,
+            snoozed_from,
+            after,
+        } = options;
         let seq = (view.of_kind_in("item", ctx).len() + 1).to_string();
         // A snooze's successor names its origin in its bytes, so two machines
         // that snooze the same check write the same id.
@@ -1372,10 +1409,12 @@ impl ContextStore {
                     None => Some(self.enqueue_item(
                         &ctx,
                         &snoozed.ask,
-                        Some(until),
-                        snoozed.check.as_ref(),
-                        Some(&snoozed.id),
-                        &[],
+                        NewItem {
+                            due: Some(until),
+                            check: snoozed.check.as_ref(),
+                            snoozed_from: Some(&snoozed.id),
+                            after: &[],
+                        },
                         now,
                     )?),
                 }
