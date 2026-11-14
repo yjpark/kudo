@@ -62,7 +62,9 @@ pub fn allowed_with(
     let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     let host = get("host").unwrap_or_default();
     if !answers_to(host, hosts) {
-        return Err(format!("the console does not answer to {host:?}"));
+        return Err(format!(
+            "the console does not answer to {host:?}; add it to KUDO_CONSOLE_HOSTS"
+        ));
     }
     if !get("content-type").is_some_and(|ct| ct.starts_with("application/json")) {
         return Err("the console takes JSON only".to_owned());

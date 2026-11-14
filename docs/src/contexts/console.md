@@ -92,6 +92,10 @@ type. In Kimi, typing during a running turn queues the message; press **Ctrl-S**
 to steer immediately, which releases the worker's open claim and ends its lease
 as a takeover.
 
+`KUDO_MAX_TURNS` is the maximum number of **queue items** one lease may submit,
+not the number of agent turns within an item. The default is 20; after that many
+submitted items the lease ends; a later worker starts with a fresh session.
+
 ### Which agent CLI runs
 
 The node's own `KUDO_AGENT_HARNESS` selects `claude` (the default) or `kimi`;

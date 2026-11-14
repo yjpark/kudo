@@ -30,18 +30,30 @@ use crate::route::{RouteFailure, Target};
 /// succeed — and a timeout is the answer a caller is most likely to mishandle.
 pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+struct ClientLane {
+    connection: vox::ConnectionHandle,
+    client: ConsumerApiClient,
+}
+
 /// A live consumer connection to one hub.
 ///
 /// Holds no mesh state of its own: every read goes to the hub, so two readers
 /// never disagree about the world. The lane itself is replaceable — a hub that
 /// restarts is re-dialed rather than ending the session.
+// implements: b37a9e70ffbc60eea24a22bf9bb6d90244e1368ef7e4f2006893f71cc6317b07
 pub struct HubClient {
     addr: String,
     /// Behind a lock so a dead lane can be swapped for a fresh one. The read
     /// lock is held only long enough to clone the handle, never across a call,
     /// so concurrent calls do not serialize behind each other.
-    client: RwLock<Arc<ConsumerApiClient>>,
+    client: RwLock<Arc<ClientLane>>,
     timeout: Duration,
+}
+
+impl Drop for HubClient {
+    fn drop(&mut self) {
+        let _ = self.client.get_mut().connection.shutdown();
+    }
 }
 
 impl std::fmt::Debug for HubClient {
@@ -55,8 +67,8 @@ impl std::fmt::Debug for HubClient {
     }
 }
 
-/// Open one consumer lane to `addr`.
-async fn dial_lane(addr: &str) -> Result<ConsumerApiClient, ShimError> {
+/// Open one consumer lane to `addr`, retaining its connection driver.
+async fn dial_lane(addr: &str) -> Result<ClientLane, ShimError> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .map_err(|source| ShimError::HubUnreachable {
@@ -64,19 +76,21 @@ async fn dial_lane(addr: &str) -> Result<ConsumerApiClient, ShimError> {
             source,
         })?;
 
-    vox::initiator_on(vox::transport::tcp::StreamLink::tcp(socket))
+    let connection = vox::initiator_on(vox::transport::tcp::StreamLink::tcp(socket))
         .establish_connection()
         .await
         .map_err(|e| ShimError::HubHandshake {
             addr: addr.to_string(),
             detail: e.to_string(),
-        })?
+        })?;
+    let client = connection
         .open_lane()
         .await
         .map_err(|e| ShimError::HubHandshake {
             addr: addr.to_string(),
             detail: e.to_string(),
-        })
+        })?;
+    Ok(ClientLane { connection, client })
 }
 
 /// Was this the connection dying, rather than someone answering?
@@ -118,7 +132,7 @@ impl HubClient {
     }
 
     /// The lane as it stands now.
-    async fn lane(&self) -> Arc<ConsumerApiClient> {
+    async fn lane(&self) -> Arc<ClientLane> {
         self.client.read().await.clone()
     }
 
@@ -126,16 +140,14 @@ impl HubClient {
     ///
     /// Two calls failing at once must not produce two re-dials: the second finds
     /// the stored lane is no longer the one it was holding, and takes that.
-    async fn redial(
-        &self,
-        stale: &Arc<ConsumerApiClient>,
-    ) -> Result<Arc<ConsumerApiClient>, ShimError> {
+    async fn redial(&self, stale: &Arc<ClientLane>) -> Result<Arc<ClientLane>, ShimError> {
         let mut guard = self.client.write().await;
         if !Arc::ptr_eq(&guard, stale) {
             return Ok(guard.clone());
         }
         let fresh = Arc::new(dial_lane(&self.addr).await?);
-        *guard = fresh.clone();
+        let old = std::mem::replace(&mut *guard, fresh.clone());
+        let _ = old.connection.shutdown();
         Ok(fresh)
     }
 
@@ -162,13 +174,13 @@ impl HubClient {
     /// (`hub:08c3ce357742ccf578caddcfb6578a92216b515adcfe1ac9de4543406be52cb0`).
     pub async fn topology(&self) -> Result<TopologySnapshot, ShimError> {
         let lane = self.lane().await;
-        match self.bounded("topology", lane.topology()).await? {
+        match self.bounded("topology", lane.client.topology()).await? {
             Ok(snapshot) => Ok(snapshot),
             Err(e) if is_transport_failure(&e) => {
                 // The lane died. Re-dial once and ask again; if the dial fails,
                 // that error names the address, which is what to act on.
                 let fresh = self.redial(&lane).await?;
-                self.bounded("topology", fresh.topology())
+                self.bounded("topology", fresh.client.topology())
                     .await?
                     .map_err(|e| ShimError::Hub(format!("{e:?}")))
             }
@@ -199,14 +211,14 @@ impl HubClient {
         let lane = self.lane().await;
 
         let error = match self
-            .bounded(&what, lane.route(target.selector(), call.clone()))
+            .bounded(&what, lane.client.route(target.selector(), call.clone()))
             .await?
         {
             Ok(reply) => return Ok(reply),
             Err(e) if is_transport_failure(&e) => {
                 let fresh = self.redial(&lane).await?;
                 match self
-                    .bounded(&what, fresh.route(target.selector(), call.clone()))
+                    .bounded(&what, fresh.client.route(target.selector(), call.clone()))
                     .await?
                 {
                     Ok(reply) => return Ok(reply),

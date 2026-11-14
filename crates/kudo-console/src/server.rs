@@ -21,6 +21,7 @@ static FOLLOWING: OnceLock<()> = OnceLock::new();
 /// One store for the server's life, so its mirror spacing and offline backoff
 /// hold across requests.
 static STORE: Mutex<Option<Arc<ContextStore>>> = Mutex::new(None);
+static HUB: OnceLock<Arc<kudo_shim::HubClient>> = OnceLock::new();
 
 fn moved() -> &'static tokio::sync::Notify {
     MOVED.get_or_init(tokio::sync::Notify::new)
@@ -279,11 +280,23 @@ async fn recorded(pane: &PaneRef) -> Result<bool, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// The hub, dialled within two seconds.
-async fn hub() -> Result<kudo_shim::HubClient, String> {
+/// The process's hub, dialled within two seconds and reused until it redials itself.
+async fn hub() -> Result<Arc<kudo_shim::HubClient>, String> {
     let addr = kudo_shim::hub_addr_from_env().ok_or("no hub: set KUDO_HUB_ADDR")?;
+    if let Some(hub) = HUB.get() {
+        return Ok(hub.clone());
+    }
     match tokio::time::timeout(Duration::from_secs(2), kudo_shim::HubClient::dial(&addr)).await {
-        Ok(Ok(hub)) => Ok(hub),
+        Ok(Ok(hub)) => {
+            let hub = Arc::new(hub);
+            if HUB.set(hub.clone()).is_ok() {
+                Ok(hub)
+            } else {
+                HUB.get()
+                    .cloned()
+                    .ok_or_else(|| "the hub connection was not retained".to_owned())
+            }
+        }
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err(format!("the hub at {addr} did not answer")),
     }
@@ -345,11 +358,8 @@ pub(crate) async fn type_into(node: String, job: String, bytes: Vec<u8>) -> Resu
 /// The nodes the hub reaches; none when no hub is configured, it is down, or
 /// it does not answer within two seconds.
 async fn nodes() -> Vec<NodeView> {
-    let Some(addr) = kudo_shim::hub_addr_from_env() else {
-        return Vec::new();
-    };
     let ask = async {
-        let hub = kudo_shim::HubClient::dial(&addr).await.ok()?;
+        let hub = hub().await.ok()?;
         hub.topology().await.ok()
     };
     match tokio::time::timeout(Duration::from_secs(2), ask).await {

@@ -253,24 +253,28 @@ async fn run_waker() -> i32 {
         kudo_shim::waker::EVERY.as_secs(),
         nodes.join(", ")
     );
+    let mut hub = None;
     loop {
-        match tokio::time::timeout(Duration::from_secs(5), HubClient::dial(&addr)).await {
-            Ok(Ok(hub)) => {
-                for line in kudo_shim::waker::wake_once(
-                    &hub,
-                    store.clone(),
-                    unix_now(),
-                    &own,
-                    quiet,
-                    &mut backoff,
-                )
-                .await
-                {
-                    println!("{line}");
-                }
+        if hub.is_none() {
+            match tokio::time::timeout(Duration::from_secs(5), HubClient::dial(&addr)).await {
+                Ok(Ok(dialled)) => hub = Some(dialled),
+                Ok(Err(e)) => eprintln!("kudo waker: the hub at {addr}: {e}"),
+                Err(_) => eprintln!("kudo waker: the hub at {addr} did not answer"),
             }
-            Ok(Err(e)) => eprintln!("kudo waker: the hub at {addr}: {e}"),
-            Err(_) => eprintln!("kudo waker: the hub at {addr} did not answer"),
+        }
+        if let Some(connected) = hub.as_ref() {
+            for line in kudo_shim::waker::wake_once(
+                connected,
+                store.clone(),
+                unix_now(),
+                &own,
+                quiet,
+                &mut backoff,
+            )
+            .await
+            {
+                println!("{line}");
+            }
         }
         tokio::time::sleep(kudo_shim::waker::EVERY).await;
     }

@@ -1,0 +1,2 @@
+{"@schema":"kinora-commit-archive-v1"}
+{"event_kind":"store","kind":"markdown","id":"ecc140f1eff14b228e6cf9aee7c6f8ab9be1887672ffe5fc67e1b8a6ce8406ed","hash":"d79a1ff29d46b44c33be181739a328d7170f39ffe03356607eb1dcf8f17ddf8a","parents":["ecc140f1eff14b228e6cf9aee7c6f8ab9be1887672ffe5fc67e1b8a6ce8406ed"],"ts":"2026-11-14T10:18:31.176803514Z","author":"YJ Park","provenance":"implementation","metadata":{"name":"bundle-7-findings-plan","status::resolved":"false","task::milestone":"v1"}}
