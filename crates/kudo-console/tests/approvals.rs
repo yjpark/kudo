@@ -10,7 +10,7 @@ mod common;
 
 use kudo_console::badge::{Badge, badge};
 use kudo_console::layout::THREE_PANES;
-use kudo_console::model::{ApprovalView, ConsoleData};
+use kudo_console::model::{ApprovalView, ConsoleData, McpApprovalView};
 use kudo_console::selection::Selection;
 
 fn waiting(node: &str, job: &str, argv: &[&str], waited_s: u64) -> ApprovalView {
@@ -68,6 +68,48 @@ fn a_waiting_job_shows_what_is_needed_to_answer_it() {
     ] {
         assert!(html.contains(text), "{text:?} missing from {html}");
     }
+}
+
+fn waiting_mcp() -> McpApprovalView {
+    McpApprovalView {
+        request: "request-1".into(),
+        context: "home lab".into(),
+        lease: "lease-1".into(),
+        tool: "mcp__chat__send_message".into(),
+        arguments: r#"{"text":"hello"}"#.into(),
+        waited_s: 60,
+        left_s: 1740,
+    }
+}
+
+// implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de@fdae3bbd25e0ab56206b07c5d58d6b105f7a32fa28ba95b81e635252c3295ef2
+#[test]
+fn an_mcp_write_shows_its_arguments_and_only_single_use_verdicts() {
+    let html = render(ConsoleData {
+        mcp_approvals: vec![waiting_mcp()],
+        ..ConsoleData::default()
+    });
+    for text in [
+        "approvals (1)",
+        "mcp__chat__send_message",
+        r#"{"text":"hello"}"#,
+        "home lab",
+        "lease-1",
+        "29 min left",
+        "allow once",
+        "deny once",
+    ] {
+        assert!(html.contains(text), "{text:?} missing from {html}");
+    }
+    assert!(!html.contains("allow always"), "{html}");
+    assert!(!html.contains("deny always"), "{html}");
+    assert!(!html.contains("edit, then allow"), "{html}");
+
+    let badge = closed(ConsoleData {
+        mcp_approvals: vec![waiting_mcp()],
+        ..ConsoleData::default()
+    });
+    assert!(badge.contains("1 approval"), "{badge}");
 }
 
 /// Nothing waiting: the tray says so in a sentence, and offers no verdict.
@@ -236,6 +278,26 @@ mod server_side {
             name.ends_with(&ctx.0[..12]),
             "titles need not be unique: {name}"
         );
+    }
+
+    // implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de@fdae3bbd25e0ab56206b07c5d58d6b105f7a32fa28ba95b81e635252c3295ef2
+    #[test]
+    fn mcp_requests_become_approval_views_with_time_left() {
+        let dir = std::env::temp_dir().join(format!("kudo-console-mcp-view-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = ContextStore::init(&dir).unwrap();
+        let ctx = store.create_context("home lab", "# home lab\n", T0).unwrap();
+        let request = store
+            .request_mcp(&ctx, "lease-1", "mcp__chat__send_message", "{}", T0)
+            .unwrap();
+        let pending = store.pending_mcp(T0 + 60).unwrap();
+        let views = views::mcp_approvals(pending, T0 + 60);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].request, request.id);
+        assert_eq!(views[0].context, ctx.0);
+        assert_eq!(views[0].lease, "lease-1");
+        assert_eq!(views[0].waited_s, 60);
+        assert_eq!(views[0].left_s, 1740);
     }
 
     /// The verdict names the buttons send.

@@ -179,6 +179,14 @@ pub fn approvals(
     views
 }
 
+pub fn mcp_approvals(
+    requests: Vec<kudo_context::McpRequest>,
+    now: Now,
+) -> Vec<crate::model::McpApprovalView> {
+    let _ = (requests, now);
+    Vec::new()
+}
+
 /// A span of seconds in the fewest words: `40 s`, `3 min`, `2 h`, `4 d`.
 fn span(secs: u64) -> String {
     match secs {

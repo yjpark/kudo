@@ -80,6 +80,8 @@ pub struct ConsoleData {
     pub error: Option<String>,
     /// Jobs on any node waiting for the author's verdict, oldest first.
     pub approvals: Vec<ApprovalView>,
+    /// External MCP calls waiting for the author's verdict.
+    pub mcp_approvals: Vec<McpApprovalView>,
     /// Nodes whose queue could not be read: nothing shown there is not
     /// "nothing waiting".
     pub approvals_unknown: Vec<String>,
@@ -149,6 +151,18 @@ pub struct ApprovalView {
     pub left_s: u64,
     /// The context whose worker asked, when one traced it.
     pub context: Option<String>,
+}
+
+/// An external MCP call waiting for one single-use verdict.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpApprovalView {
+    pub request: String,
+    pub context: String,
+    pub lease: String,
+    pub tool: String,
+    pub arguments: String,
+    pub waited_s: u64,
+    pub left_s: u64,
 }
 
 /// An argv as one line a person reads and edits: shell-quoted, so
