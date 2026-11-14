@@ -139,6 +139,26 @@ pub struct Submission {
     pub blocked_on: Vec<ItemId>,
 }
 
+/// An external MCP call waiting for the author's verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpRequest {
+    pub id: String,
+    pub context: ContextId,
+    pub lease: String,
+    pub tool: String,
+    pub arguments: String,
+    pub deadline: Now,
+}
+
+/// A single-use verdict on an MCP request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpVerdict {
+    Allow,
+    Deny,
+}
+
+pub const MCP_APPROVAL_TIMEOUT: Now = 1800;
+
 /// A rough edge filed from inside the work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InboxEntry {

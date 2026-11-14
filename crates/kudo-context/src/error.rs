@@ -39,6 +39,8 @@ pub enum Error {
     InvalidCheck(String),
     /// An item dependency that cannot stand: why.
     InvalidDependency(String),
+    /// An MCP approval request or verdict that cannot stand: why.
+    InvalidApproval(String),
     /// Not a node name (empty, or with spaces).
     InvalidNode(String),
 }
@@ -76,6 +78,7 @@ impl fmt::Display for Error {
             ),
             Self::InvalidCheck(why) => write!(f, "check: {why}"),
             Self::InvalidDependency(why) => write!(f, "item dependency: {why}"),
+            Self::InvalidApproval(why) => write!(f, "MCP approval: {why}"),
             Self::InvalidNode(node) => write!(f, "{node:?} is not a node name"),
             Self::ClaimNotHeld { claim, lease } => {
                 write!(f, "claim {claim} is not held by lease {lease}")

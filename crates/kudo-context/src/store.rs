@@ -1450,6 +1450,44 @@ impl ContextStore {
         }))
     }
 
+    pub fn request_mcp(
+        &self,
+        ctx: &ContextId,
+        lease: &str,
+        tool: &str,
+        arguments: &str,
+        now: Now,
+    ) -> Result<crate::McpRequest, Error> {
+        let _ = (ctx, lease, tool, arguments, now);
+        Err(Error::InvalidApproval("requests are not implemented".into()))
+    }
+
+    pub fn pending_mcp(&self, now: Now) -> Result<Vec<crate::McpRequest>, Error> {
+        let _ = now;
+        Ok(Vec::new())
+    }
+
+    pub fn mcp_verdict(
+        &self,
+        ctx: &ContextId,
+        request: &str,
+        now: Now,
+    ) -> Result<Option<crate::McpVerdict>, Error> {
+        let _ = (ctx, request, now);
+        Ok(None)
+    }
+
+    pub fn decide_mcp(
+        &self,
+        ctx: &ContextId,
+        request: &str,
+        verdict: crate::McpVerdict,
+        now: Now,
+    ) -> Result<(), Error> {
+        let _ = (ctx, request, verdict, now);
+        Err(Error::InvalidApproval("verdicts are not implemented".into()))
+    }
+
     /// File a rough edge under the context: one line, an optional body, and
     /// the lease that filed it.
     pub fn file_inbox(
