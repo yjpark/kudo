@@ -158,6 +158,66 @@ fn a_worker_starts_in_a_declared_repo_on_this_node() {
 }
 
 // implements: a6751902e8e01e5d7d5983196da9170f33f40d0d74246b5746977ea1c5e45098@a6751902e8e01e5d7d5983196da9170f33f40d0d74246b5746977ea1c5e45098
+// implements: e45b144bd8c7b8efbc9ab9e0be43e549540b4da58859ba765a7ae53567349e34
+#[test]
+fn an_isolated_context_gives_each_lease_a_persistent_worktree_off_main() {
+    let root = std::env::temp_dir().join(format!("kudo-shim-worktree-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = root.join("store");
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |dir: &std::path::Path, argv: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(argv)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{argv:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    git(&repo, &["config", "user.email", "kudo@example.org"]);
+    git(&repo, &["config", "user.name", "Kudo Test"]);
+    std::fs::write(repo.join("tracked"), "main\n").unwrap();
+    git(&repo, &["add", "tracked"]);
+    git(&repo, &["commit", "-m", "main"]);
+    let main = git(&repo, &["rev-parse", "HEAD"]);
+
+    let ctx = cli::context(&store, &args(&["new", "--worktree", "isolated"]), T0).unwrap();
+    let ctx = ctx.trim();
+    cli::context(
+        &store,
+        &args(&["repo", "add", ctx, "kudo", repo.to_str().unwrap(), "--node", "n1"]),
+        T0,
+    )
+    .unwrap();
+    let lease_a = "11111111-1111-4111-8111-111111111111";
+    let lease_b = "22222222-2222-4222-8222-222222222222";
+    let a = cli::worker_dir_for_lease(&store, ctx, Some("kudo"), "n1", lease_a)
+        .unwrap()
+        .unwrap();
+    let b = cli::worker_dir_for_lease(&store, ctx, Some("kudo"), "n1", lease_b)
+        .unwrap()
+        .unwrap();
+
+    assert_ne!(a, b);
+    assert_ne!(a, repo);
+    assert_eq!(std::fs::read_to_string(a.join("tracked")).unwrap(), "main\n");
+    assert_eq!(git(&a, &["rev-parse", "HEAD"]), main);
+    std::fs::write(a.join("unfinished"), "keep me\n").unwrap();
+    let again = cli::worker_dir_for_lease(&store, ctx, Some("kudo"), "n1", lease_a)
+        .unwrap()
+        .unwrap();
+    assert_eq!(again, a);
+    assert_eq!(std::fs::read_to_string(a.join("unfinished")).unwrap(), "keep me\n");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn trace_lists_the_loop_events_and_why_names_what_wrote_the_head() {
     use kudo_context::{ContextId, ContextStore, Submission, TraceEvent};

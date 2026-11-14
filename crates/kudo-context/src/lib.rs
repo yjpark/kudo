@@ -148,6 +148,13 @@ pub struct InboxEntry {
     pub lease: String,
 }
 
+/// Choices fixed when a context is created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ContextOptions {
+    /// Give each worker lease its own worktree for a named repo.
+    pub worktree: bool,
+}
+
 /// A context as a list shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextSummary {

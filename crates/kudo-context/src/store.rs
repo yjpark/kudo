@@ -66,6 +66,7 @@ const CHECK_PASS: &str = "kudo::check_pass";
 const CHECK_WINDOW: &str = "kudo::check_window";
 const SNOOZED_FROM: &str = "kudo::snoozed_from";
 const VERDICT: &str = "kudo::verdict";
+const WORKTREE: &str = "kudo::worktree";
 
 const SUBMITTED: &str = "submitted";
 const RELEASED: &str = "released";
@@ -273,19 +274,29 @@ impl ContextStore {
 
     /// Birth a context whose first head is `head`.
     pub fn create_context(&self, title: &str, head: &str, now: Now) -> Result<ContextId, Error> {
+        self.create_context_with_options(title, head, crate::ContextOptions::default(), now)
+    }
+
+    /// Birth a context with its immutable launch options.
+    // implements: e45b144bd8c7b8efbc9ab9e0be43e549540b4da58859ba765a7ae53567349e34
+    pub fn create_context_with_options(
+        &self,
+        title: &str,
+        head: &str,
+        options: crate::ContextOptions,
+        now: Now,
+    ) -> Result<ContextId, Error> {
         // The marker makes the card unique: a title and a second do not.
         let card = format!(
             "<!-- kudo context {} -->\n# {title}\n\nkudo context, created {}\n",
             nonce()?,
             ts(now)
         );
-        let born = self.put(
-            "markdown",
-            card.into_bytes(),
-            meta([(KIND, "context")]),
-            None,
-            now,
-        )?;
+        let mut metadata = meta([(KIND, "context")]);
+        if options.worktree {
+            metadata.insert(WORKTREE.to_owned(), "lease".to_owned());
+        }
+        let born = self.put("markdown", card.into_bytes(), metadata, None, now)?;
         let ctx = ContextId(born.id.clone());
         self.put(
             "markdown",
@@ -319,6 +330,17 @@ impl ContextStore {
                 })
             })
             .collect()
+    }
+
+    /// Whether this context gives each lease its own worktree.
+    pub fn worktree_per_lease(&self, ctx: &ContextId) -> Result<bool, Error> {
+        let view = self.view()?;
+        let card = view
+            .by_id
+            .get(&ctx.0)
+            .and_then(|events| events.first())
+            .ok_or_else(|| Error::UnknownContext(ctx.0.clone()))?;
+        Ok(field(card, KIND) == "context" && field(card, WORKTREE) == "lease")
     }
 
     /// The context `id_or_prefix` names: its full id, or a prefix of it that

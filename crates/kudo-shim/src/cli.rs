@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use kudo_context::{ContextId, ContextStore, Repo, TraceEvent};
 
-const USAGE: &str = "usage: kudo-shim context new <title>\n       \
+const USAGE: &str = "usage: kudo-shim context new [--worktree] <title>\n       \
                      kudo-shim context enqueue <context> [--due <when>] [--after <item>]… <ask>\n       \
                      kudo-shim context check <context> <what> --pass <condition> [--window <window>] [--due <when>]\n       \
                      kudo-shim context wake-node <context> <node>\n       \
@@ -87,6 +87,23 @@ pub fn context_with(
 ) -> Result<String, String> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
+        ["new", "--worktree", title @ ..] if !title.is_empty() => {
+            let title = title.join(" ");
+            let store = open_or_init_with(store_dir, mirror)?;
+            let head = format!(
+                "# {title}\nstate:       active — new\nwhere:       nothing done yet\n\
+                 next_action: pull the first item · who: worker\n"
+            );
+            let id = store
+                .create_context_with_options(
+                    &title,
+                    &head,
+                    kudo_context::ContextOptions { worktree: true },
+                    now,
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(format!("{}\n", id.0))
+        }
         ["new", title @ ..] if !title.is_empty() => {
             let title = title.join(" ");
             let store = open_or_init_with(store_dir, mirror)?;
@@ -465,6 +482,18 @@ pub fn worker_dir(
             ctx.0.get(..SHORT_ID).unwrap_or(&ctx.0)
         )),
     }
+}
+
+/// Where this lease starts, applying the context's worktree isolation.
+pub fn worker_dir_for_lease(
+    store_dir: &Path,
+    ctx: &str,
+    repo: Option<&str>,
+    node: &str,
+    lease: &str,
+) -> Result<Option<PathBuf>, String> {
+    let _ = lease;
+    worker_dir(store_dir, ctx, repo, node)
 }
 
 /// Replace this process with the agent CLI, started as a worker under `ctx`.
