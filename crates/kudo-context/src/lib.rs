@@ -133,6 +133,8 @@ pub struct Submission {
     pub base: Option<Vec<String>>,
     /// A check's verdict: required on a check's claim, refused on any other.
     pub check: Option<CheckClose>,
+    /// Items that must submit before this claim's item becomes ready again.
+    pub blocked_on: Vec<ItemId>,
 }
 
 /// A rough edge filed from inside the work.

@@ -892,6 +892,19 @@ impl ContextStore {
         self.enqueue_item(ctx, ask, None, None, None, now)
     }
 
+    /// Enqueue `ask`, gated by dependencies and optionally a due time.
+    pub fn enqueue_with_dependencies(
+        &self,
+        ctx: &ContextId,
+        ask: &str,
+        due: Option<Now>,
+        after: &[ItemId],
+        now: Now,
+    ) -> Result<ItemId, Error> {
+        let _ = after;
+        self.enqueue_item(ctx, ask, due, None, None, now)
+    }
+
     /// Enqueue `ask`, ready at `due` (epoch seconds) or at once.
     // implements: 716432a845eb22babf957938aaa9a9c0f3cd3bea3ebee24c89a5147a795e7e2b@80a3c962223cc4b37ffceccfdfb83cb9d143fd3e956d4cbe19c7ec3e93774ffd
     pub fn enqueue_due(

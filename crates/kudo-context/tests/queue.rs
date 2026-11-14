@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use kudo_context::{ContextId, ContextStore, Error, Submission};
+use kudo_context::{ContextId, ContextStore, Error, ItemId, Submission};
 
 const T0: i64 = 1_792_500_000;
 const TTL: i64 = 600;
@@ -230,4 +230,81 @@ fn the_ready_count_drops_as_items_are_claimed_and_submitted() {
     assert_eq!(store.ready_count(&ctx, T0).unwrap(), 1);
     store.submit(&claim.id, &sub("h\n", "l"), T0 + 1).unwrap();
     assert_eq!(store.ready_count(&ctx, T0 + 1).unwrap(), 1);
+}
+
+// implements: a99975ca76ea8d354544294d35af3d49c1215a2029be4aa91f51e541fc26fdc7
+#[test]
+fn an_item_waits_for_every_dependency_to_submit() {
+    let (store, ctx) = store_with_context();
+    let first = store.enqueue(&ctx, "first", T0).unwrap();
+    let second = store
+        .enqueue_with_dependencies(&ctx, "second", None, &[first.clone()], T0)
+        .unwrap();
+    let third = store
+        .enqueue_with_dependencies(&ctx, "third", None, &[second.clone()], T0)
+        .unwrap();
+
+    assert_eq!(store.ready_count(&ctx, T0).unwrap(), 1);
+    let claim = store.pull(&ctx, "lease-a", T0, TTL).unwrap().unwrap();
+    assert_eq!(claim.item.id, first);
+    store.submit(&claim.id, &sub("h1\n", "one"), T0 + 1).unwrap();
+
+    let claim = store.pull(&ctx, "lease-a", T0 + 2, TTL).unwrap().unwrap();
+    assert_eq!(claim.item.id, second);
+    store.release(&claim.id, T0 + 3).unwrap();
+    let claim = store.pull(&ctx, "lease-a", T0 + 4, TTL).unwrap().unwrap();
+    assert_eq!(claim.item.id, second, "release does not satisfy it");
+    store.submit(&claim.id, &sub("h2\n", "two"), T0 + 5).unwrap();
+
+    let claim = store.pull(&ctx, "lease-a", T0 + 6, TTL).unwrap().unwrap();
+    assert_eq!(claim.item.id, third);
+}
+
+// implements: a99975ca76ea8d354544294d35af3d49c1215a2029be4aa91f51e541fc26fdc7
+#[test]
+fn dependencies_must_be_distinct_existing_items_in_the_same_context() {
+    let (store, ctx) = store_with_context();
+    let first = store.enqueue(&ctx, "first", T0).unwrap();
+    let other = store.create_context("other", "other\n", T0).unwrap();
+    let foreign = store.enqueue(&other, "foreign", T0).unwrap();
+    let missing = ItemId("ab".repeat(32));
+
+    for deps in [
+        vec![missing],
+        vec![foreign],
+        vec![first.clone(), first.clone()],
+    ] {
+        let result = store.enqueue_with_dependencies(&ctx, "bad", None, &deps, T0);
+        assert!(matches!(result, Err(Error::InvalidDependency(_))), "{result:?}");
+    }
+}
+
+// implements: 8c1fc5e54c5e48bb4086bd6b27a2d09bf41e100de7c743c6b04fd44b48af3d54
+#[test]
+fn a_blocked_submit_records_the_attempt_without_finishing_or_moving_the_head() {
+    let (store, ctx) = store_with_context();
+    let original_head = store.head(&ctx).unwrap();
+    let item = store.enqueue(&ctx, "dependent work", T0).unwrap();
+    let blocker = store.enqueue(&ctx, "prerequisite", T0 + 1).unwrap();
+    let claim = store.pull(&ctx, "lease-a", T0 + 2, TTL).unwrap().unwrap();
+    assert_eq!(claim.item.id, item);
+
+    let mut blocked = sub("must not land\n", "waiting for the prerequisite");
+    blocked.blocked_on = vec![blocker.clone()];
+    store.submit(&claim.id, &blocked, T0 + 3).unwrap();
+
+    assert_eq!(store.head(&ctx).unwrap(), original_head);
+    assert_eq!(store.log(&ctx).unwrap().len(), 1);
+    assert!(store.log(&ctx).unwrap()[0].contains("waiting for the prerequisite"));
+    assert_eq!(store.ready_count(&ctx, T0 + 4).unwrap(), 1);
+
+    let claim = store.pull(&ctx, "lease-b", T0 + 4, TTL).unwrap().unwrap();
+    assert_eq!(claim.item.id, blocker, "the blocked item stays waiting");
+    store.submit(&claim.id, &sub("prerequisite done\n", "done"), T0 + 5).unwrap();
+
+    let claim = store.pull(&ctx, "lease-a", T0 + 6, TTL).unwrap().unwrap();
+    assert_eq!(claim.item.id, item);
+    assert_eq!(claim.attempt, 2);
+    store.submit(&claim.id, &sub("finished\n", "finished"), T0 + 7).unwrap();
+    assert_eq!(store.head(&ctx).unwrap().body, "finished\n");
 }
