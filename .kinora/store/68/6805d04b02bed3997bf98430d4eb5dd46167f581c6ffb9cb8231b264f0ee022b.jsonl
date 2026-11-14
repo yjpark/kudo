@@ -1,0 +1,2 @@
+{"@schema":"kinora-commit-archive-v1"}
+{"event_kind":"store","kind":"markdown","id":"53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de","hash":"fdae3bbd25e0ab56206b07c5d58d6b105f7a32fa28ba95b81e635252c3295ef2","parents":["53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de"],"ts":"2026-11-14T10:41:07.699007829Z","author":"YJ Park","provenance":"design","metadata":{"kudo::designs":"2a6c661e7460f525f6bb55f5b12c297c63960b7a0027d399bf2cf6ed103c04ea","name":"kudo::worker::mcp-write-approval","status::active":"true"}}

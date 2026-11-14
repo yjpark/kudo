@@ -119,6 +119,20 @@ pub fn run_with_harness(
     result.unwrap_or_else(HookReply::failed)
 }
 
+pub fn pre_tool_use_with(
+    input: &Value,
+    setup: &WorkerSetup,
+    now: Now,
+    harness: &dyn AgentHarness,
+    clock: impl Fn() -> Now,
+    pause: impl FnMut(),
+) -> HookReply {
+    let _ = (input, setup, now, clock, pause);
+    harness.pre_tool_reply(&kudo_worker::harness::PreToolDecision::Deny(
+        "MCP approval is not implemented".into(),
+    ))
+}
+
 /// A shell call just returned (or failed): record it in the lease's trace
 /// and tell the worker the kino to cite. Any other tool is let be. Best
 /// effort: a failed record never fails the call.

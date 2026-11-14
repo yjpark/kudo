@@ -83,6 +83,13 @@ pub struct ShellCall {
     pub exit: Option<i32>,
 }
 
+/// A PreToolUse decision, independent of the agent CLI's wire format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreToolDecision {
+    Allow,
+    Deny(String),
+}
+
 /// What a hook prints and how it exits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookReply {
@@ -151,6 +158,20 @@ pub trait AgentHarness {
     fn stop_reply(&self, stop: &Stop) -> HookReply;
 
     fn post_tool_reply(&self, event: &str, context: &str) -> HookReply;
+
+    fn pre_tool_reply(&self, decision: &PreToolDecision) -> HookReply {
+        let (permission, reason) = match decision {
+            PreToolDecision::Allow => ("allow", "allowed by kudo"),
+            PreToolDecision::Deny(reason) => ("deny", reason.as_str()),
+        };
+        HookReply::json(&serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": permission,
+                "permissionDecisionReason": reason,
+            }
+        }))
+    }
 }
 
 /// Claude Code's launch and hook protocol.

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use kudo_context::{ContextStore, Established, Submission};
 use kudo_shim::hook::{self, HookReply};
 use kudo_shim::worker_tools;
-use kudo_worker::{KICKOFF, WorkerSetup};
+use kudo_worker::{ClaudeCode, KICKOFF, WorkerSetup};
 
 const T0: i64 = 1_792_500_000;
 
@@ -181,6 +181,96 @@ fn an_unknown_event_is_refused_loudly() {
     let (s, _store) = setup();
     let reply = hook::run("frobnicate", "{}", &s, T0);
     assert_ne!(reply.code, 0);
+}
+
+fn pre_tool(tool: &str, arguments: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": arguments,
+    })
+}
+
+fn permission(reply: &HookReply) -> String {
+    json(reply)["hookSpecificOutput"]["permissionDecision"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+// implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de
+#[test]
+fn kudo_non_mcp_and_read_only_mcp_calls_do_not_wait() {
+    let (s, store) = setup();
+    for input in [
+        pre_tool("mcp__kudo__submit", serde_json::json!({"claim": "c"})),
+        pre_tool("Bash", serde_json::json!({"command": "true"})),
+        pre_tool("mcp__chat__get_message", serde_json::json!({"id": "m"})),
+        pre_tool("mcp__search__query", serde_json::json!({"q": "kudo"})),
+    ] {
+        let reply = hook::pre_tool_use_with(&input, &s, T0, &ClaudeCode, || T0, || {});
+        assert_eq!(permission(&reply), "allow", "{input}");
+    }
+    assert!(store.pending_mcp(T0).unwrap().is_empty());
+}
+
+// implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de
+#[test]
+fn an_external_mcp_write_waits_for_its_single_use_verdict() {
+    let (s, store) = setup();
+    let input = pre_tool("mcp__chat__send_message", serde_json::json!({"text": "hello"}));
+    let reply = hook::pre_tool_use_with(
+        &input,
+        &s,
+        T0,
+        &ClaudeCode,
+        || T0 + 1,
+        || {
+            let pending = store.pending_mcp(T0 + 1).unwrap();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].tool, "mcp__chat__send_message");
+            assert_eq!(pending[0].arguments, r#"{"text":"hello"}"#);
+            store
+                .decide_mcp(&s.context, &pending[0].id, kudo_context::McpVerdict::Allow, T0 + 1)
+                .unwrap();
+        },
+    );
+    assert_eq!(permission(&reply), "allow");
+    assert!(store.pending_mcp(T0 + 2).unwrap().is_empty());
+}
+
+// implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de
+#[test]
+fn unknown_mcp_verbs_denial_expiry_and_store_failure_never_allow() {
+    let (s, store) = setup();
+    let input = pre_tool("mcp__chat__archive", serde_json::json!({"id": "c"}));
+    let denied = hook::pre_tool_use_with(&input, &s, T0, &ClaudeCode, || T0 + 1, || {
+        let pending = store.pending_mcp(T0 + 1).unwrap();
+        store
+            .decide_mcp(&s.context, &pending[0].id, kudo_context::McpVerdict::Deny, T0 + 1)
+            .unwrap();
+    });
+    assert_eq!(permission(&denied), "deny");
+
+    let expired = hook::pre_tool_use_with(
+        &input,
+        &s,
+        T0 + 10,
+        &ClaudeCode,
+        || T0 + 10 + kudo_context::MCP_APPROVAL_TIMEOUT,
+        || {},
+    );
+    assert_eq!(permission(&expired), "deny");
+
+    let mut broken = s.clone();
+    broken.store_dir = broken.store_dir.join("missing");
+    let failed = hook::run(
+        "pre-tool-use",
+        &input.to_string(),
+        &broken,
+        T0,
+    );
+    assert_eq!(permission(&failed), "deny");
 }
 
 #[test]
