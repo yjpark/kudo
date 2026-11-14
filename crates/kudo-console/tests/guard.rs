@@ -99,18 +99,18 @@ fn the_page_render_itself_is_allowed() {
 /// names must be one this console answers to.
 #[test]
 fn a_host_the_console_does_not_answer_to_is_refused() {
-    assert!(
-        allowed(
-            &Method::POST,
-            &headers(&[
-                ("content-type", "application/json"),
-                ("host", "evil.example:8080"),
-                ("origin", "http://evil.example:8080"),
-                ("sec-fetch-site", "same-origin"),
-            ])
-        )
-        .is_err()
-    );
+    let error = allowed(
+        &Method::POST,
+        &headers(&[
+            ("content-type", "application/json"),
+            ("host", "evil.example:8080"),
+            ("origin", "http://evil.example:8080"),
+            ("sec-fetch-site", "same-origin"),
+        ]),
+    )
+    .expect_err("an unknown host is refused");
+    assert!(error.contains("evil.example:8080"), "{error}");
+    assert!(error.contains("KUDO_CONSOLE_HOSTS"), "{error}");
     for host in ["localhost:8080", "127.0.0.1:8080", "[::1]:8080"] {
         assert!(
             allowed(
