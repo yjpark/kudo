@@ -1,0 +1,3 @@
+{"@schema":"kinora-commit-archive-v1"}
+{"event_kind":"assign","kind":"kin::assign","id":"6723e473889d8df5cb9437ca716ea976aac06093b50666594a5dd20c2d9a9248","hash":"6723e473889d8df5cb9437ca716ea976aac06093b50666594a5dd20c2d9a9248","parents":[],"ts":"2026-11-14T12:24:24.939941244Z","author":"YJ Park","provenance":"design","metadata":{"kin::target_root":"inbox"}}
+{"event_kind":"store","kind":"markdown","id":"6723e473889d8df5cb9437ca716ea976aac06093b50666594a5dd20c2d9a9248","hash":"6723e473889d8df5cb9437ca716ea976aac06093b50666594a5dd20c2d9a9248","parents":[],"ts":"2026-11-14T12:24:24.939941244Z","author":"YJ Park","provenance":"design","metadata":{"kudo::designs":"339780bd5c828108620b27fd9f48ea4ffc1d8e7412927190026bda2524460161","name":"decision-context-unique-birth"}}
