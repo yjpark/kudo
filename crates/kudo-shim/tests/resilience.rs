@@ -4,6 +4,7 @@
 //! implements: 1d90deaa708a39eb606d0190ebbbab5169902bb5fb78a8e76acff87904e91414
 //! implements: deda3d32832baaaaeb5814a0f1a859f80451d081d5f8e70d1def0a3d989c9dfe
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -70,6 +71,55 @@ async fn wait_for_node(client: &HubClient) -> bool {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     false
+}
+
+/// A dropped client closes its socket; Vox drivers otherwise outlive their handles.
+// implements: b37a9e70ffbc60eea24a22bf9bb6d90244e1368ef7e4f2006893f71cc6317b07
+#[tokio::test(flavor = "multi_thread")]
+async fn dropped_hub_clients_close_their_connections() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("address").to_string();
+    let live = Arc::new(AtomicUsize::new(0));
+    let counting = live.clone();
+    let _accept = tokio::spawn(async move {
+        let hub = ServedHub::new();
+        loop {
+            let Ok((socket, _)) = listener.accept().await else {
+                break;
+            };
+            let live = counting.clone();
+            let hub = hub.clone();
+            tokio::spawn(async move {
+                let _ = hub::serve::serve_connection_with(
+                    hub,
+                    vox::transport::tcp::StreamLink::tcp(socket),
+                    move |handle| {
+                        live.fetch_add(1, Ordering::SeqCst);
+                        tokio::spawn(async move {
+                            handle.closed().await;
+                            live.fetch_sub(1, Ordering::SeqCst);
+                        });
+                    },
+                )
+                .await;
+            });
+        }
+    });
+
+    for _ in 0..4 {
+        let client = HubClient::dial(&addr).await.expect("dial");
+        client.topology().await.expect("topology");
+        drop(client);
+    }
+    for _ in 0..100 {
+        if live.load(Ordering::SeqCst) == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(live.load(Ordering::SeqCst), 0, "connections leaked");
 }
 
 /// **A hub restart is not a session restart.** The shim re-dials and keeps
