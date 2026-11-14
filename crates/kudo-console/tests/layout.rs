@@ -33,6 +33,7 @@ fn sample() -> ConsoleData {
             id: "c".repeat(64),
             title: "first kudo".into(),
             ready: 1,
+            waiting: 0,
             submitted: 2,
             later: 1,
             next_due: Some("2026-10-22T10:00:00Z".into()),

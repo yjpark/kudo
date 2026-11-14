@@ -213,6 +213,22 @@ fn the_tools_pull_submit_and_release() {
     );
 }
 
+// implements: 8c1fc5e54c5e48bb4086bd6b27a2d09bf41e100de7c743c6b04fd44b48af3d54
+#[test]
+fn a_blocked_submit_says_it_waits_without_advancing_the_head() {
+    let (s, store) = setup();
+    store.enqueue(&s.context, "dependent", T0).unwrap();
+    let blocker = store.enqueue(&s.context, "blocker", T0).unwrap();
+    let claim = store.pull(&s.context, &s.lease, T0, 600).unwrap().unwrap();
+    let mut submission = plain("not the new head\n", "waiting", None);
+    submission.blocked_on = vec![blocker];
+
+    let reply = worker_tools::submit(&s, &claim.id.0, &submission, T0 + 1).unwrap();
+    assert!(reply.contains("Blocked"), "{reply}");
+    assert!(reply.contains("head is unchanged"), "{reply}");
+    assert!(reply.contains("End your turn"), "{reply}");
+}
+
 #[test]
 fn pull_on_an_empty_queue_says_so_and_a_bad_claim_is_an_error() {
     let (s, _store) = setup();

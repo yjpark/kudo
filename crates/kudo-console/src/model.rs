@@ -43,6 +43,7 @@ pub struct ContextCard {
     pub id: String,
     pub title: String,
     pub ready: usize,
+    pub waiting: usize,
     pub submitted: usize,
     /// Items not yet due, and when the next one is.
     pub later: usize,

@@ -88,6 +88,7 @@ pub fn contexts(store: &ContextStore, now: Now) -> Result<Vec<ContextCard>, Erro
                     .and_then(|d| jiff::Timestamp::from_second(d).ok())
                     .map(|t| t.to_string()),
                 ready: store.ready_count(&c.id, now)?,
+                waiting: 0,
                 submitted: store.log(&c.id)?.len(),
                 id: c.id.0,
                 title: c.title,

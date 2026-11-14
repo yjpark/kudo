@@ -7,7 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
 
 use kudo_console::views;
-use kudo_context::{ClaimId, ContextStore, TraceEvent};
+use kudo_context::{ClaimId, ContextStore, Submission, TraceEvent};
 
 const T0: i64 = 1_792_500_000;
 
@@ -54,6 +54,33 @@ fn a_card_shows_counts_and_the_leases_still_running() {
     let leases: Vec<&str> = card.workers.iter().map(|w| w.lease.as_str()).collect();
     assert_eq!(leases, ["lease-live"], "an ended lease is not a worker");
     assert_eq!(card.workers[0].last, "pull c1");
+}
+
+// implements: 8c1fc5e54c5e48bb4086bd6b27a2d09bf41e100de7c743c6b04fd44b48af3d54
+#[test]
+fn a_blocked_attempt_is_waiting_not_submitted() {
+    let store = store("blocked");
+    let ctx = store.create_context("blocked", "# b\n", T0).unwrap();
+    store.enqueue(&ctx, "dependent", T0).unwrap();
+    let blocker = store.enqueue(&ctx, "blocker", T0).unwrap();
+    let claim = store.pull(&ctx, "lease", T0, 600).unwrap().unwrap();
+    store
+        .submit(
+            &claim.id,
+            &Submission {
+                head: "not landed\n".into(),
+                log: "waiting".into(),
+                blocked_on: vec![blocker],
+                ..Default::default()
+            },
+            T0 + 1,
+        )
+        .unwrap();
+
+    let card = &views::contexts(&store, T0 + 2).unwrap()[0];
+    assert_eq!(card.ready, 1, "only the blocker is ready");
+    assert_eq!(card.waiting, 1);
+    assert_eq!(card.submitted, 0);
 }
 
 #[test]

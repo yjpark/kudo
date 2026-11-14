@@ -28,6 +28,28 @@ fn new_creates_the_store_and_prints_the_context_id() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// implements: a99975ca76ea8d354544294d35af3d49c1215a2029be4aa91f51e541fc26fdc7
+#[test]
+fn enqueue_after_makes_the_named_item_a_dependency() {
+    let dir = std::env::temp_dir().join(format!("kudo-shim-cli-after-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let ctx = cli::context(&dir, &args(&["new", "dependent"]), T0).unwrap();
+    let ctx = ctx.trim();
+    let first = cli::context(&dir, &args(&["enqueue", ctx, "first"]), T0).unwrap();
+    let first = first.trim().strip_prefix("enqueued ").unwrap();
+    cli::context(
+        &dir,
+        &args(&["enqueue", ctx, "--after", first, "second"]),
+        T0,
+    )
+    .unwrap();
+
+    let shown = cli::context(&dir, &args(&["show", ctx]), T0).unwrap();
+    assert!(shown.contains("1 ready"), "{shown}");
+    assert!(shown.contains("1 waiting"), "{shown}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_bad_command_says_how_to_use_it() {
     let dir = std::env::temp_dir();
