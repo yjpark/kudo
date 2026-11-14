@@ -1,0 +1,3 @@
+{"@schema":"kinora-commit-archive-v1"}
+{"event_kind":"store","kind":"markdown","id":"2a6c661e7460f525f6bb55f5b12c297c63960b7a0027d399bf2cf6ed103c04ea","hash":"2a6c661e7460f525f6bb55f5b12c297c63960b7a0027d399bf2cf6ed103c04ea","parents":[],"ts":"2026-11-14T10:09:42.926201516Z","author":"YJ Park","provenance":"gmail","metadata":{"name":"kudo-bundle-7"}}
+{"event_kind":"assign","kind":"kin::assign","id":"2a6c661e7460f525f6bb55f5b12c297c63960b7a0027d399bf2cf6ed103c04ea","hash":"2a6c661e7460f525f6bb55f5b12c297c63960b7a0027d399bf2cf6ed103c04ea","parents":[],"ts":"2026-11-14T10:09:42.926201516Z","author":"YJ Park","provenance":"gmail","metadata":{"kin::target_root":"inbox"}}
