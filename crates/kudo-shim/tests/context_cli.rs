@@ -151,6 +151,17 @@ fn a_worker_starts_in_a_declared_repo_on_this_node() {
         cli::worker_dir(&dir, ctx, Some("kudo"), "n1").unwrap(),
         Some(repo.clone())
     );
+    assert_eq!(
+        cli::worker_dir_for_lease(
+            &dir,
+            ctx,
+            Some("kudo"),
+            "n1",
+            "33333333-3333-4333-8333-333333333333",
+        )
+        .unwrap(),
+        Some(repo.clone())
+    );
     assert_eq!(cli::worker_dir(&dir, ctx, None, "n1").unwrap(), None);
     let err = cli::worker_dir(&dir, ctx, Some("kudo"), "n2").unwrap_err();
     assert!(err.contains("repo add"), "says how to declare it: {err}");
@@ -173,7 +184,11 @@ fn an_isolated_context_gives_each_lease_a_persistent_worktree_off_main() {
             .args(argv)
             .output()
             .unwrap();
-        assert!(output.status.success(), "{argv:?}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{argv:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     };
     std::process::Command::new("git")
@@ -192,7 +207,15 @@ fn an_isolated_context_gives_each_lease_a_persistent_worktree_off_main() {
     let ctx = ctx.trim();
     cli::context(
         &store,
-        &args(&["repo", "add", ctx, "kudo", repo.to_str().unwrap(), "--node", "n1"]),
+        &args(&[
+            "repo",
+            "add",
+            ctx,
+            "kudo",
+            repo.to_str().unwrap(),
+            "--node",
+            "n1",
+        ]),
         T0,
     )
     .unwrap();
@@ -207,14 +230,20 @@ fn an_isolated_context_gives_each_lease_a_persistent_worktree_off_main() {
 
     assert_ne!(a, b);
     assert_ne!(a, repo);
-    assert_eq!(std::fs::read_to_string(a.join("tracked")).unwrap(), "main\n");
+    assert_eq!(
+        std::fs::read_to_string(a.join("tracked")).unwrap(),
+        "main\n"
+    );
     assert_eq!(git(&a, &["rev-parse", "HEAD"]), main);
     std::fs::write(a.join("unfinished"), "keep me\n").unwrap();
     let again = cli::worker_dir_for_lease(&store, ctx, Some("kudo"), "n1", lease_a)
         .unwrap()
         .unwrap();
     assert_eq!(again, a);
-    assert_eq!(std::fs::read_to_string(a.join("unfinished")).unwrap(), "keep me\n");
+    assert_eq!(
+        std::fs::read_to_string(a.join("unfinished")).unwrap(),
+        "keep me\n"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

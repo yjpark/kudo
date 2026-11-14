@@ -485,6 +485,7 @@ pub fn worker_dir(
 }
 
 /// Where this lease starts, applying the context's worktree isolation.
+// implements: e45b144bd8c7b8efbc9ab9e0be43e549540b4da58859ba765a7ae53567349e34
 pub fn worker_dir_for_lease(
     store_dir: &Path,
     ctx: &str,
@@ -492,8 +493,47 @@ pub fn worker_dir_for_lease(
     node: &str,
     lease: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let _ = lease;
-    worker_dir(store_dir, ctx, repo, node)
+    let Some(base) = worker_dir(store_dir, ctx, repo, node)? else {
+        return Ok(None);
+    };
+    let store = open(store_dir)?;
+    let ctx = named(&store, ctx)?;
+    if !store.worktree_per_lease(&ctx).map_err(|e| e.to_string())? {
+        return Ok(Some(base));
+    }
+    lease_for(Some(lease.to_owned()))?;
+    let name = repo.ok_or("a worktree needs a named repo")?;
+    let path = store_dir.join("worktrees").join(lease).join(name);
+    if path.is_dir() {
+        return Ok(Some(path));
+    }
+    if path.exists() {
+        return Err(format!(
+            "worktree path {} is not a directory",
+            path.display()
+        ));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("worktree path {} has no parent", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&base)
+        .args(["worktree", "add", "--detach"])
+        .arg(&path)
+        .arg("main")
+        .output()
+        .map_err(|e| format!("cannot run git worktree for {name}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cannot create a worktree for {name} from {}/main: {}",
+            base.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(Some(path))
 }
 
 /// Replace this process with the agent CLI, started as a worker under `ctx`.
@@ -520,19 +560,19 @@ pub fn exec_worker(
         Ok(ctx) => ctx,
         Err(e) => return e,
     };
-    let dir = match worker_dir(store_dir, &ctx.0, repo, &node_name()) {
+    // A launcher that picked the lease (the console, to record the pane it
+    // starts) hands it in.
+    let lease = match lease_from(|k| std::env::var(k).ok()) {
+        Ok(lease) => lease,
+        Err(e) => return e,
+    };
+    let dir = match worker_dir_for_lease(store_dir, &ctx.0, repo, &node_name(), &lease) {
         Ok(dir) => dir,
         Err(e) => return e,
     };
     let shim = match std::env::current_exe() {
         Ok(path) => path,
         Err(e) => return format!("cannot find this binary: {e}"),
-    };
-    // A launcher that picked the lease (the console, to record the pane it
-    // starts) hands it in.
-    let lease = match lease_from(|k| std::env::var(k).ok()) {
-        Ok(lease) => lease,
-        Err(e) => return e,
     };
     let setup = kudo_worker::WorkerSetup {
         store_dir: store_dir.to_path_buf(),

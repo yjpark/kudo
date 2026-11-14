@@ -81,6 +81,14 @@ after a day it is no longer listed.
 Only panes the console started can be typed into, and only by the console
 (the node refuses input from anyone else).
 
+Create a context with `kudo-shim context new --worktree <title>` when parallel
+workers must not share a checkout. With a named repo, each lease then launches
+in its own detached worktree based on the repo's local `main`, under the context
+store's `worktrees` directory. Restarting the same lease reuses that directory,
+including unfinished changes. Worktrees are never deleted automatically; review
+and remove them deliberately. Contexts created without the option keep the
+existing shared-directory behavior.
+
 A worker with nothing ready **waits** for the next item instead of ending: it
 shows as `wait` in the *where* pane, and an item queued later is handed to it.
 It looks locally every 3 s and syncs the mirror every 30 s. About every nine
