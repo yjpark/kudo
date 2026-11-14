@@ -69,7 +69,13 @@ pub(crate) async fn console_data(selected: Option<String>) -> ConsoleData {
     follow_events();
     // The store's reads (and its mirror's syncs) block: off the runtime.
     let read = tokio::task::spawn_blocking(move || {
-        store().map(|store| crate::views::console(&store, selected, now()))
+        store().and_then(|store| {
+            let at = now();
+            let mut data = crate::views::console(&store, selected, at);
+            let pending = store.pending_mcp(at).map_err(|e| e.to_string())?;
+            data.mcp_approvals = crate::views::mcp_approvals(pending, at);
+            Ok(data)
+        })
     })
     .await;
     let mut data = match read {
@@ -167,6 +173,33 @@ pub(crate) async fn decide(
         kudo_shim::jobs::status_word(&reply.status),
         kudo_shim::jobs::verdict_word(reply.verdict)
     ))
+}
+
+/// The author's single-use verdict on one parked MCP call.
+pub(crate) async fn decide_mcp(request: String, verdict: String) -> Result<String, String> {
+    let verdict = match verdict.as_str() {
+        "allow-once" => kudo_context::McpVerdict::Allow,
+        "deny-once" => kudo_context::McpVerdict::Deny,
+        _ => return Err(format!("{verdict:?} is not a single-use MCP verdict")),
+    };
+    let decided = tokio::task::spawn_blocking(move || {
+        let store = store()?;
+        let at = now();
+        let request = store
+            .pending_mcp(at)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|pending| pending.id == request)
+            .ok_or_else(|| "the MCP request is no longer waiting".to_owned())?;
+        store
+            .decide_mcp(&request.context, &request.id, verdict, at)
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(format!("MCP request {}: {verdict:?}", request.id))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    bump();
+    Ok(decided)
 }
 
 fn now_ms() -> u64 {

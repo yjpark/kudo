@@ -27,7 +27,7 @@ usage:
   kudo-shim                      an MCP server on stdio (the CLI starts it): job
                                  tools over the hub, and worker tools in a worker
   kudo-shim hook <event>         answer a worker's CLI hook (session-start, stop,
-                                 pre-compact, user-prompt-submit)
+                                 pre-tool-use, pre-compact, user-prompt-submit)
   kudo-shim context <command>    drive a context by hand (new, enqueue, show,
                                  list, trace, why, repo add, check, wake-node)
   kudo-shim worker <context> [--repo <name>] [--headless]

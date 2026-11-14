@@ -152,6 +152,19 @@ has `KUDO_WORKER_STRICT_MCP=1` gives its workers kudo's server only
 services.kudo-node.environment.KUDO_WORKER_STRICT_MCP = "1";
 ```
 
+For Claude Code workers, a PreToolUse hook governs calls to those external
+servers. Kudo tools, non-MCP tools, and external tools beginning with a known
+read-only verb (`get`, `list`, `read`, `search`, `fetch`, `query`, `find`,
+`describe`, `show`, or `status`) proceed. Every other external MCP call waits in
+the console's approval tray with its full tool name and JSON arguments. **Allow
+once** permits only that invocation; **deny once**, an unreadable store, or 30
+minutes without a verdict denies it. Kimi workers are not wired to this flow:
+Kimi hook launch failures and timeouts fail open, and its 600-second hook limit
+cannot provide this contract.
+
+This is an MCP boundary, not a network sandbox. Bash and other direct egress
+need separate proxy or sandbox rules; the hook does not make those read-only.
+
 Either way, project servers are not offered. Claude declines servers from
 `.mcp.json` in the repository and its ancestors. Kimi reads project servers from
 `.kimi-code/mcp.json`; because Kimi cannot trust a workspace while declining

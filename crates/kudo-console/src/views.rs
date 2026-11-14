@@ -179,12 +179,29 @@ pub fn approvals(
     views
 }
 
+// implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de@fdae3bbd25e0ab56206b07c5d58d6b105f7a32fa28ba95b81e635252c3295ef2
 pub fn mcp_approvals(
     requests: Vec<kudo_context::McpRequest>,
     now: Now,
 ) -> Vec<crate::model::McpApprovalView> {
-    let _ = (requests, now);
-    Vec::new()
+    requests
+        .into_iter()
+        .map(|request| crate::model::McpApprovalView {
+            waited_s: (now - (request.deadline - kudo_context::MCP_APPROVAL_TIMEOUT))
+                .max(0)
+                .try_into()
+                .unwrap_or(u64::MAX),
+            left_s: (request.deadline - now)
+                .max(0)
+                .try_into()
+                .unwrap_or(u64::MAX),
+            request: request.id,
+            context: request.context.0,
+            lease: request.lease,
+            tool: request.tool,
+            arguments: request.arguments,
+        })
+        .collect()
 }
 
 /// A span of seconds in the fewest words: `40 s`, `3 min`, `2 h`, `4 d`.

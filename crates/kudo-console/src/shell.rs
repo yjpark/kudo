@@ -209,7 +209,10 @@ fn crumb(data: &ConsoleData, sel: &Selection) -> String {
 
 #[component]
 fn TopBar(data: ConsoleData, selection: Selection) -> Element {
-    let state = badge(data.approvals.len(), data.approvals_unknown.len());
+    let state = badge(
+        data.approvals.len() + data.mcp_approvals.len(),
+        data.approvals_unknown.len(),
+    );
     let theme = try_consume_context::<Signal<Theme>>();
     let current = theme.map(|t| t()).unwrap_or_default();
     rsx! {
@@ -589,7 +592,7 @@ fn Tray(data: ConsoleData) -> Element {
             class: "tray",
             "data-tray": "true",
             div { class: "row",
-                h3 { style: "flex:1;", "approvals ({data.approvals.len()})" }
+                h3 { style: "flex:1;", "approvals ({data.approvals.len() + data.mcp_approvals.len()})" }
                 button { onclick: move |_| step_back(), "×" }
             }
             if let Some(text) = outcome.text {
@@ -600,11 +603,69 @@ fn Tray(data: ConsoleData) -> Element {
                     "not answering: {data.approvals_unknown.join(\", \")} (retrying)"
                 }
             }
-            if data.approvals.is_empty() && data.approvals_unknown.is_empty() {
+            if data.approvals.is_empty() && data.mcp_approvals.is_empty() && data.approvals_unknown.is_empty() {
                 p { class: "muted", "nothing is waiting for you" }
             }
             for approval in data.approvals.iter() {
                 ApprovalCard { key: "{approval.node}-{approval.job}", approval: approval.clone() }
+            }
+            for approval in data.mcp_approvals.iter() {
+                McpApprovalCard { key: "{approval.request}", approval: approval.clone() }
+            }
+        }
+    }
+}
+
+/// One external MCP call waiting for a single-use verdict.
+// implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de@fdae3bbd25e0ab56206b07c5d58d6b105f7a32fa28ba95b81e635252c3295ef2
+#[component]
+fn McpApprovalCard(approval: crate::model::McpApprovalView) -> Element {
+    let mut busy = use_signal(|| false);
+    let left = approval.left_s.div_ceil(60);
+    let send = move |verdict: &'static str| {
+        let request = approval.request.clone();
+        async move {
+            if busy() {
+                return;
+            }
+            busy.set(true);
+            said(None);
+            match crate::api::decide_mcp(request, verdict.to_owned()).await {
+                Ok(done) => said(Some((false, done))),
+                Err(e) => said(Some((true, format!("not decided: {e}")))),
+            }
+            busy.set(false);
+        }
+    };
+    rsx! {
+        div { class: "card",
+            div { class: "argv", "{approval.tool}" }
+            pre { class: "argv", "{approval.arguments}" }
+            div { "MCP call · {left} min left" }
+            div { class: "muted", "asked by {approval.context} · lease {approval.lease}" }
+            div { class: "row", style: "margin-top:6px;",
+                button {
+                    disabled: busy(),
+                    onclick: {
+                        let send = send.clone();
+                        move |e: MouseEvent| {
+                            e.stop_propagation();
+                            spawn(send("allow-once"));
+                        }
+                    },
+                    "allow once"
+                }
+            }
+            div { class: "row", style: "margin-top:18px;",
+                button {
+                    class: "bad",
+                    disabled: busy(),
+                    onclick: move |e: MouseEvent| {
+                        e.stop_propagation();
+                        spawn(send("deny-once"));
+                    },
+                    "deny once"
+                }
             }
         }
     }

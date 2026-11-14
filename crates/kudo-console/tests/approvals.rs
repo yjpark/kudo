@@ -92,7 +92,7 @@ fn an_mcp_write_shows_its_arguments_and_only_single_use_verdicts() {
     for text in [
         "approvals (1)",
         "mcp__chat__send_message",
-        r#"{"text":"hello"}"#,
+        "{&#34;text&#34;:&#34;hello&#34;}",
         "home lab",
         "lease-1",
         "29 min left",
@@ -283,10 +283,13 @@ mod server_side {
     // implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de@fdae3bbd25e0ab56206b07c5d58d6b105f7a32fa28ba95b81e635252c3295ef2
     #[test]
     fn mcp_requests_become_approval_views_with_time_left() {
-        let dir = std::env::temp_dir().join(format!("kudo-console-mcp-view-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kudo-console-mcp-view-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let store = ContextStore::init(&dir).unwrap();
-        let ctx = store.create_context("home lab", "# home lab\n", T0).unwrap();
+        let ctx = store
+            .create_context("home lab", "# home lab\n", T0)
+            .unwrap();
         let request = store
             .request_mcp(&ctx, "lease-1", "mcp__chat__send_message", "{}", T0)
             .unwrap();

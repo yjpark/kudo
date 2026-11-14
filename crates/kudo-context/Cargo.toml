@@ -16,6 +16,7 @@ kinora = { workspace = true }
 kinora-remote = { workspace = true }
 object_store = { version = "0.14.2", default-features = false }
 jiff = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 object_store = { version = "0.14.2", default-features = false }

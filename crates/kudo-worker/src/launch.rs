@@ -109,8 +109,9 @@ pub fn project_servers(dir: &Path) -> Vec<String> {
 }
 
 /// The hooks a worker installs, as (CLI event name, `kudo-shim hook` argument).
-const HOOKS: [(&str, &str); 4] = [
+const HOOKS: [(&str, &str); 5] = [
     ("SessionStart", "session-start"),
+    ("PreToolUse", "pre-tool-use"),
     ("Stop", "stop"),
     ("PreCompact", "pre-compact"),
     ("UserPromptSubmit", "user-prompt-submit"),
@@ -136,6 +137,8 @@ pub fn plan(
             // implements: 9680c1e9f147ea4dba7d85a17e7c2405f6cd5b4bb13e87dd81849d986e06dfed@a7051e3e59de5e20f03e2117248f5af341ed55a104af661aca2026f28c4abc99
             if *event == "Stop" {
                 hook["timeout"] = json!(crate::env::WAIT_WINDOW + 60);
+            } else if *event == "PreToolUse" {
+                hook["timeout"] = json!(kudo_context::MCP_APPROVAL_TIMEOUT + 60);
             }
             ((*event).to_owned(), json!([{ "hooks": [hook] }]))
         })

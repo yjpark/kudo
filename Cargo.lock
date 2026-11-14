@@ -4171,6 +4171,7 @@ dependencies = [
  "kinora",
  "kinora-remote",
  "object_store",
+ "serde_json",
 ]
 
 [[package]]

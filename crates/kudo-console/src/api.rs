@@ -77,6 +77,15 @@ pub async fn decide(
         .map_err(ServerFnError::new)
 }
 
+/// Allow once or deny once for one parked external MCP call.
+#[server]
+pub async fn decide_mcp(request: String, verdict: String) -> Result<String, ServerFnError> {
+    crate::server::guarded().await?;
+    crate::server::decide_mcp(request, verdict)
+        .await
+        .map_err(ServerFnError::new)
+}
+
 /// A node's governed jobs, for the node view's poll.
 #[server]
 pub async fn node_jobs(node: String) -> Result<NodeJobs, ServerFnError> {

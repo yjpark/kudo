@@ -67,6 +67,8 @@ const CHECK_WINDOW: &str = "kudo::check_window";
 const SNOOZED_FROM: &str = "kudo::snoozed_from";
 const VERDICT: &str = "kudo::verdict";
 const WORKTREE: &str = "kudo::worktree";
+const TOOL: &str = "kudo::tool";
+const REQUEST: &str = "kudo::request";
 
 const SUBMITTED: &str = "submitted";
 const RELEASED: &str = "released";
@@ -1450,6 +1452,8 @@ impl ContextStore {
         }))
     }
 
+    /// Park one external MCP call for a single-use verdict.
+    // implements: 53544d31b7dbadd28d6f2b3e9de57b79cb6cdf089069f2062418879f4d3621de@fdae3bbd25e0ab56206b07c5d58d6b105f7a32fa28ba95b81e635252c3295ef2
     pub fn request_mcp(
         &self,
         ctx: &ContextId,
@@ -1458,25 +1462,71 @@ impl ContextStore {
         arguments: &str,
         now: Now,
     ) -> Result<crate::McpRequest, Error> {
-        let _ = (ctx, lease, tool, arguments, now);
-        Err(Error::InvalidApproval("requests are not implemented".into()))
+        if tool.trim().is_empty() {
+            return Err(Error::InvalidApproval("the tool name is empty".into()));
+        }
+        serde_json::from_str::<serde_json::Value>(arguments)
+            .map_err(|e| Error::InvalidApproval(format!("arguments are not JSON: {e}")))?;
+        self.view()?.require_context(ctx)?;
+        let deadline = now
+            .checked_add(crate::MCP_APPROVAL_TIMEOUT)
+            .ok_or_else(|| Error::InvalidApproval("the deadline overflows".into()))?;
+        let content = format!("<!-- kudo mcp request {} -->\n{arguments}", nonce()?);
+        let born = self.put(
+            "text",
+            content.into_bytes(),
+            meta([
+                (KIND, "mcp-request"),
+                (CONTEXT, &ctx.0),
+                (LEASE, lease),
+                (TOOL, tool),
+                (DEADLINE, &deadline.to_string()),
+            ]),
+            None,
+            now,
+        )?;
+        Ok(crate::McpRequest {
+            id: born.id,
+            context: ctx.clone(),
+            lease: lease.to_owned(),
+            tool: tool.to_owned(),
+            arguments: arguments.to_owned(),
+            deadline,
+        })
     }
 
+    /// Every unexpired, unanswered MCP request, oldest first.
     pub fn pending_mcp(&self, now: Now) -> Result<Vec<crate::McpRequest>, Error> {
-        let _ = now;
-        Ok(Vec::new())
+        let view = self.view()?;
+        let mut requests = view
+            .by_id
+            .values()
+            .filter_map(|events| events.first())
+            .filter(|event| field(event, KIND) == "mcp-request")
+            .filter(|event| deadline_of(event) > now)
+            .filter(|event| view.mcp_verdict(&event.id).is_none())
+            .map(|event| self.mcp_request(event))
+            .collect::<Result<Vec<_>, _>>()?;
+        requests.sort_by(|a, b| a.deadline.cmp(&b.deadline).then_with(|| a.id.cmp(&b.id)));
+        Ok(requests)
     }
 
+    /// The verdict on one live request; `None` while waiting or after expiry.
     pub fn mcp_verdict(
         &self,
         ctx: &ContextId,
         request: &str,
         now: Now,
     ) -> Result<Option<crate::McpVerdict>, Error> {
-        let _ = (ctx, request, now);
-        Ok(None)
+        let view = self.view()?;
+        let event = view.mcp_request(ctx, request)?;
+        if deadline_of(event) <= now {
+            return Ok(None);
+        }
+        Ok(view.mcp_verdict(request))
     }
 
+    /// Allow or deny one request once; late and repeated verdicts are refused.
     pub fn decide_mcp(
         &self,
         ctx: &ContextId,
@@ -1484,8 +1534,34 @@ impl ContextStore {
         verdict: crate::McpVerdict,
         now: Now,
     ) -> Result<(), Error> {
-        let _ = (ctx, request, verdict, now);
-        Err(Error::InvalidApproval("verdicts are not implemented".into()))
+        self.sync(true)?;
+        let view = self.view()?;
+        let event = view.mcp_request(ctx, request)?;
+        if deadline_of(event) <= now {
+            return Err(Error::InvalidApproval("the request has expired".into()));
+        }
+        if view.mcp_verdict(request).is_some() {
+            return Err(Error::InvalidApproval(
+                "the request already has a verdict".into(),
+            ));
+        }
+        let verdict = match verdict {
+            crate::McpVerdict::Allow => "allow",
+            crate::McpVerdict::Deny => "deny",
+        };
+        self.put(
+            "text",
+            format!("kudo mcp verdict\nrequest: {request}\nverdict: {verdict}\n").into_bytes(),
+            meta([
+                (KIND, "mcp-verdict"),
+                (CONTEXT, &ctx.0),
+                (REQUEST, request),
+                (VERDICT, verdict),
+            ]),
+            None,
+            now,
+        )?;
+        Ok(())
     }
 
     /// File a rough edge under the context: one line, an optional body, and
@@ -1640,6 +1716,17 @@ impl ContextStore {
 
     fn head_of(&self, event: &Event) -> Result<Head, Error> {
         self.head_version(&event.hash)
+    }
+
+    fn mcp_request(&self, event: &Event) -> Result<crate::McpRequest, Error> {
+        Ok(crate::McpRequest {
+            id: event.id.clone(),
+            context: ContextId(field(event, CONTEXT).to_owned()),
+            lease: field(event, LEASE).to_owned(),
+            tool: field(event, TOOL).to_owned(),
+            arguments: strip_marker(&self.read(&event.hash)?),
+            deadline: deadline_of(event),
+        })
     }
 
     fn item_of(&self, event: &Event) -> Result<Item, Error> {
@@ -1857,6 +1944,36 @@ impl View {
             .filter(|e| field(e, ITEM) == item)
             .map(|e| (e, settles.get(e.id.as_str()).copied()))
             .collect()
+    }
+
+    fn mcp_request(&self, ctx: &ContextId, request: &str) -> Result<&Event, Error> {
+        let event = self
+            .by_id
+            .get(request)
+            .and_then(|events| events.first())
+            .ok_or_else(|| Error::InvalidApproval(format!("no request {request}")))?;
+        if field(event, KIND) != "mcp-request" || field(event, CONTEXT) != ctx.0 {
+            return Err(Error::InvalidApproval(format!(
+                "{request} is not an MCP request in context {}",
+                ctx.0
+            )));
+        }
+        Ok(event)
+    }
+
+    fn mcp_verdict(&self, request: &str) -> Option<crate::McpVerdict> {
+        let mut verdict = None;
+        for event in self.by_id.values().filter_map(|events| events.first()) {
+            if field(event, KIND) != "mcp-verdict" || field(event, REQUEST) != request {
+                continue;
+            }
+            match field(event, VERDICT) {
+                "deny" => return Some(crate::McpVerdict::Deny),
+                "allow" => verdict = Some(crate::McpVerdict::Allow),
+                _ => {}
+            }
+        }
+        verdict
     }
 
     fn validate_dependencies(
