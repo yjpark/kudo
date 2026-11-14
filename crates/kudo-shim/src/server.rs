@@ -168,6 +168,9 @@ pub struct SubmitArgs {
     /// With a verdict: what you saw, in a line.
     #[serde(default)]
     pub note: Option<String>,
+    /// Wait instead of finishing: existing items in this context that must submit first.
+    #[serde(default)]
+    pub blocked_on: Vec<String>,
 }
 
 /// One established line.
@@ -219,6 +222,11 @@ impl SubmitArgs {
                 self.note.as_deref(),
                 now,
             )?,
+            blocked_on: self
+                .blocked_on
+                .iter()
+                .map(|id| kudo_context::ItemId(id.clone()))
+                .collect(),
         })
     }
 }
@@ -538,7 +546,9 @@ impl ShimServer {
                        ids or http(s) URLs), claimed, ruled out and could not see. A line \
                        whose evidence does not resolve lands as claimed. The head is \
                        superseded, never edited; the claim is settled. A check's claim also \
-                       takes its verdict (pass, fail, or snooze with snooze_until) and a note."
+                       takes its verdict (pass, fail, or snooze with snooze_until) and a note. \
+                       To wait instead of finishing, set blocked_on to existing item ids: the \
+                       attempt is logged, the head stays unchanged, and the item waits for them."
     )]
     async fn submit(
         &self,

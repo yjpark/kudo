@@ -247,14 +247,18 @@ fn an_item_waits_for_every_dependency_to_submit() {
     assert_eq!(store.ready_count(&ctx, T0).unwrap(), 1);
     let claim = store.pull(&ctx, "lease-a", T0, TTL).unwrap().unwrap();
     assert_eq!(claim.item.id, first);
-    store.submit(&claim.id, &sub("h1\n", "one"), T0 + 1).unwrap();
+    store
+        .submit(&claim.id, &sub("h1\n", "one"), T0 + 1)
+        .unwrap();
 
     let claim = store.pull(&ctx, "lease-a", T0 + 2, TTL).unwrap().unwrap();
     assert_eq!(claim.item.id, second);
     store.release(&claim.id, T0 + 3).unwrap();
     let claim = store.pull(&ctx, "lease-a", T0 + 4, TTL).unwrap().unwrap();
     assert_eq!(claim.item.id, second, "release does not satisfy it");
-    store.submit(&claim.id, &sub("h2\n", "two"), T0 + 5).unwrap();
+    store
+        .submit(&claim.id, &sub("h2\n", "two"), T0 + 5)
+        .unwrap();
 
     let claim = store.pull(&ctx, "lease-a", T0 + 6, TTL).unwrap().unwrap();
     assert_eq!(claim.item.id, third);
@@ -275,7 +279,10 @@ fn dependencies_must_be_distinct_existing_items_in_the_same_context() {
         vec![first.clone(), first.clone()],
     ] {
         let result = store.enqueue_with_dependencies(&ctx, "bad", None, &deps, T0);
-        assert!(matches!(result, Err(Error::InvalidDependency(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(Error::InvalidDependency(_))),
+            "{result:?}"
+        );
     }
 }
 
@@ -300,11 +307,15 @@ fn a_blocked_submit_records_the_attempt_without_finishing_or_moving_the_head() {
 
     let claim = store.pull(&ctx, "lease-b", T0 + 4, TTL).unwrap().unwrap();
     assert_eq!(claim.item.id, blocker, "the blocked item stays waiting");
-    store.submit(&claim.id, &sub("prerequisite done\n", "done"), T0 + 5).unwrap();
+    store
+        .submit(&claim.id, &sub("prerequisite done\n", "done"), T0 + 5)
+        .unwrap();
 
     let claim = store.pull(&ctx, "lease-a", T0 + 6, TTL).unwrap().unwrap();
     assert_eq!(claim.item.id, item);
     assert_eq!(claim.attempt, 2);
-    store.submit(&claim.id, &sub("finished\n", "finished"), T0 + 7).unwrap();
+    store
+        .submit(&claim.id, &sub("finished\n", "finished"), T0 + 7)
+        .unwrap();
     assert_eq!(store.head(&ctx).unwrap().body, "finished\n");
 }

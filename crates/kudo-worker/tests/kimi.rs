@@ -146,7 +146,12 @@ fn kimi_headless_launch_uses_print_mode_and_a_kudo_plugin() {
         .iter()
         .find(|hook| hook["event"] == "SessionEnd")
         .unwrap();
-    assert!(session_end["command"].as_str().unwrap().ends_with("hook session-end"));
+    assert!(
+        session_end["command"]
+            .as_str()
+            .unwrap()
+            .ends_with("hook session-end")
+    );
 }
 
 #[test]
@@ -190,8 +195,16 @@ fn kimi_interactive_launch_uses_a_pty_and_controls_permissions() {
             .iter()
             .find(|file| file.path.ends_with("config.toml"))
             .unwrap();
-        assert!(config.contents.contains("default_permission_mode = \"manual\""));
-        assert!(!config.contents.contains("default_permission_mode = \"auto\""));
+        assert!(
+            config
+                .contents
+                .contains("default_permission_mode = \"manual\"")
+        );
+        assert!(
+            !config
+                .contents
+                .contains("default_permission_mode = \"auto\"")
+        );
         assert!(config.contents.contains("require_trust = true"));
     }
 }

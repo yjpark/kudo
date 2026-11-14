@@ -62,6 +62,8 @@ pub struct Item {
     pub ask: String,
     /// When it becomes ready; `None` for ready at once.
     pub due: Option<Now>,
+    /// Earlier items that must submit before this one is ready.
+    pub after: Vec<ItemId>,
     /// The check it is, if it is one.
     pub check: Option<Check>,
     /// The check item a snooze re-queued this one from.

@@ -335,9 +335,7 @@ fn toml_setting(text: &str, section: Option<&str>, key: &str, value: &str) -> St
         }
     }
     if !wrote {
-        if !saw_section
-            && let Some(name) = section
-        {
+        if !saw_section && let Some(name) = section {
             out.push(format!("[{name}]"));
         }
         out.push(setting);

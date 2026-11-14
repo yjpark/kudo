@@ -19,6 +19,26 @@ not ready: no worker pulls it and no handoff passes it on. Once due, it goes
 before items with no due time. `context show` counts the items not yet due
 and names the next one's time.
 
+## Dependencies and blocked work
+
+Name earlier items with repeated `--after` flags when their work must submit
+first:
+
+```
+kudo-shim context enqueue <context> "land the schema change"
+kudo-shim context enqueue <context> --after <item> "update the client"
+```
+
+A dependent item is **waiting**, not ready, until every named item has submitted.
+Dependencies must be distinct existing items in the same context; release and
+blocked outcomes do not satisfy them.
+
+A worker that discovers a prerequisite during an attempt calls `submit` with
+`blocked_on` set to one or more item ids. This records the attempt and its log,
+settles the claim as **blocked**, and leaves the head unchanged. The item waits
+for those submissions rather than disappearing from the queue. Use `release`
+instead when the item should become ready immediately.
+
 ## Closing a check
 
 A worker handed a check sees what passes it and the evidence window, and

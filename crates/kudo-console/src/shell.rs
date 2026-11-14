@@ -259,6 +259,9 @@ fn WherePane(data: ConsoleData, selection: Selection) -> Element {
                 div { span { class: "title", "{card.title}" } span { class: "muted", " {short(&card.id)}" } }
                 div { class: "muted",
                     "{card.ready} ready · {card.submitted} submitted"
+                    if card.waiting > 0 {
+                        " · {card.waiting} waiting"
+                    }
                     if let Some(next) = &card.next_due {
                         " · {card.later} later (next {next})"
                     }

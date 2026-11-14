@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use kudo_context::{ContextId, ContextStore, Repo, TraceEvent};
 
 const USAGE: &str = "usage: kudo-shim context new <title>\n       \
-                     kudo-shim context enqueue <context> [--due <when>] <ask>\n       \
+                     kudo-shim context enqueue <context> [--due <when>] [--after <item>]… <ask>\n       \
                      kudo-shim context check <context> <what> --pass <condition> [--window <window>] [--due <when>]\n       \
                      kudo-shim context wake-node <context> <node>\n       \
                      kudo-shim context show <context>\n       \
@@ -99,20 +99,6 @@ pub fn context_with(
                 .map_err(|e| e.to_string())?;
             Ok(format!("{}\n", id.0))
         }
-        ["enqueue", _, "--due", ..]
-            if words.len() < 5 || words[4..].join(" ").trim().is_empty() =>
-        {
-            Err("enqueue --due <when> <ask>: say when, then what to do".to_owned())
-        }
-        ["enqueue", ctx, "--due", when, ask @ ..] => {
-            let due = parse_when(when, now)?;
-            let store = open_store(store_dir, mirror, true)?;
-            let ctx = named(&store, ctx)?;
-            let item = store
-                .enqueue_due(&ctx, &ask.join(" "), Some(due), now)
-                .map_err(|e| e.to_string())?;
-            Ok(format!("{}\n", item.0))
-        }
         ["check", ctx, what, flags @ ..] => {
             let mut check = kudo_context::Check {
                 what: (*what).to_owned(),
@@ -150,14 +136,31 @@ pub fn context_with(
                 .map_err(|e| e.to_string())?;
             Ok(format!("{} wakes on {node}\n", ctx.0))
         }
-        ["enqueue", _, ask @ ..] if ask.join(" ").trim().is_empty() => {
-            Err("an empty ask: say what to do".to_owned())
-        }
-        ["enqueue", ctx, ask @ ..] if !ask.is_empty() => {
+        ["enqueue", ctx, rest @ ..] => {
+            if let Some(flag) = rest
+                .last()
+                .filter(|word| matches!(**word, "--due" | "--after"))
+            {
+                return Err(format!("{flag} needs a value"));
+            }
+            let mut due = None;
+            let mut after = Vec::new();
+            let mut rest = rest;
+            while let [flag, value, tail @ ..] = rest {
+                match *flag {
+                    "--due" => due = Some(parse_when(value, now)?),
+                    "--after" => after.push(kudo_context::ItemId((*value).to_owned())),
+                    _ => break,
+                }
+                rest = tail;
+            }
+            if rest.is_empty() || rest.join(" ").trim().is_empty() {
+                return Err("an empty ask: say what to do".to_owned());
+            }
             let store = open_store(store_dir, mirror, true)?;
             let ctx = named(&store, ctx)?;
             let item = store
-                .enqueue(&ctx, &ask.join(" "), now)
+                .enqueue_with_dependencies(&ctx, &rest.join(" "), due, &after, now)
                 .map_err(|e| e.to_string())?;
             // No lease made it: the event goes under `enqueue`.
             if let Some(hub) = hub {
@@ -174,14 +177,15 @@ pub fn context_with(
             let ctx = named(&store, ctx)?;
             let head = store.head(&ctx).map_err(|e| e.to_string())?;
             let ready = store.ready_count(&ctx, now).map_err(|e| e.to_string())?;
-            let inbox = store.inbox(&ctx).map_err(|e| e.to_string())?;
+            let waiting = store.waiting_count(&ctx, now).map_err(|e| e.to_string())?;
+            let submitted = store.submitted_count(&ctx).map_err(|e| e.to_string())?;
             let log = store.log(&ctx).map_err(|e| e.to_string())?;
+            let inbox = store.inbox(&ctx).map_err(|e| e.to_string())?;
             let mut out = format!(
                 "{}
--- {ready} ready, {} submitted, {} in the inbox
+-- {ready} ready, {waiting} waiting, {submitted} submitted, {} in the inbox
 ",
                 head.body.trim_end(),
-                log.len(),
                 inbox.len()
             );
             let later = store.not_yet_due(&ctx, now).map_err(|e| e.to_string())?;
@@ -306,7 +310,7 @@ pub fn context_with(
             let mut out = String::new();
             for c in &all {
                 let ready = store.ready_count(&c.id, now).map_err(|e| e.to_string())?;
-                let submitted = store.log(&c.id).map_err(|e| e.to_string())?.len();
+                let submitted = store.submitted_count(&c.id).map_err(|e| e.to_string())?;
                 let short = c.id.0.get(..SHORT_ID).unwrap_or(&c.id.0);
                 out.push_str(&format!(
                     "{short}  {}  ({ready} ready, {submitted} submitted, created {})\n",

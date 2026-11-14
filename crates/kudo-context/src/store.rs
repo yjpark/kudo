@@ -11,7 +11,7 @@
 //!   makes two identical asks two distinct kinos.
 //! - **claim** — write-once, its content `(item, attempt)` only, so the same
 //!   attempt can be claimed once; lease and deadline ride in metadata.
-//! - **settle** — write-once, one per claim: `submitted` or `released`.
+//! - **settle** — write-once, one per claim: `submitted`, `released`, or `blocked`.
 //! - **submission** — write-once; the typed submission rendered in fixed
 //!   sections (established lines whose evidence did not resolve land as
 //!   claimed), linked to its claim, item, head and cited kinos.
@@ -59,6 +59,8 @@ const SUBMISSION: &str = "kudo::submission";
 const REASON: &str = "kudo::reason";
 const ORIGIN_ID: &str = "kudo::origin_id";
 const DUE: &str = "kudo::due";
+const AFTER: &str = "kudo::after";
+const BLOCKED_ON: &str = "kudo::blocked_on";
 const CHECK: &str = "kudo::check";
 const CHECK_PASS: &str = "kudo::check_pass";
 const CHECK_WINDOW: &str = "kudo::check_window";
@@ -67,6 +69,7 @@ const VERDICT: &str = "kudo::verdict";
 
 const SUBMITTED: &str = "submitted";
 const RELEASED: &str = "released";
+const BLOCKED: &str = "blocked";
 
 /// A context store rooted at a directory.
 pub struct ContextStore {
@@ -889,10 +892,11 @@ impl ContextStore {
 
     /// Enqueue `ask` under the context.
     pub fn enqueue(&self, ctx: &ContextId, ask: &str, now: Now) -> Result<ItemId, Error> {
-        self.enqueue_item(ctx, ask, None, None, None, now)
+        self.enqueue_item(ctx, ask, None, None, None, &[], now)
     }
 
     /// Enqueue `ask`, gated by dependencies and optionally a due time.
+    // implements: a99975ca76ea8d354544294d35af3d49c1215a2029be4aa91f51e541fc26fdc7
     pub fn enqueue_with_dependencies(
         &self,
         ctx: &ContextId,
@@ -901,8 +905,7 @@ impl ContextStore {
         after: &[ItemId],
         now: Now,
     ) -> Result<ItemId, Error> {
-        let _ = after;
-        self.enqueue_item(ctx, ask, due, None, None, now)
+        self.enqueue_item(ctx, ask, due, None, None, after, now)
     }
 
     /// Enqueue `ask`, ready at `due` (epoch seconds) or at once.
@@ -914,7 +917,7 @@ impl ContextStore {
         due: Option<Now>,
         now: Now,
     ) -> Result<ItemId, Error> {
-        self.enqueue_item(ctx, ask, due, None, None, now)
+        self.enqueue_item(ctx, ask, due, None, None, &[], now)
     }
 
     /// Enqueue a check: what to look at, its pass condition and evidence
@@ -932,7 +935,7 @@ impl ContextStore {
                 "a check needs what to look at and a pass condition".into(),
             ));
         }
-        self.enqueue_item(ctx, &check.what, due, Some(check), None, now)
+        self.enqueue_item(ctx, &check.what, due, Some(check), None, &[], now)
     }
 
     fn enqueue_item(
@@ -942,10 +945,12 @@ impl ContextStore {
         due: Option<Now>,
         check: Option<&crate::Check>,
         snoozed_from: Option<&ItemId>,
+        after: &[ItemId],
         now: Now,
     ) -> Result<ItemId, Error> {
         let view = self.view()?;
         view.require_context(ctx)?;
+        view.validate_dependencies(ctx, after, None)?;
         let seq = (view.of_kind_in("item", ctx).len() + 1).to_string();
         // A snooze's successor names its origin in its bytes, so two machines
         // that snooze the same check write the same id.
@@ -956,6 +961,16 @@ impl ContextStore {
         let mut metadata = meta([(KIND, "item"), (CONTEXT, &ctx.0), (SEQ, &seq)]);
         if let Some(due) = due {
             metadata.insert(DUE.to_owned(), due.to_string());
+        }
+        if !after.is_empty() {
+            metadata.insert(
+                AFTER.to_owned(),
+                after
+                    .iter()
+                    .map(|id| id.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
         if let Some(check) = check {
             metadata.insert(CHECK.to_owned(), "true".to_owned());
@@ -1060,6 +1075,40 @@ impl ContextStore {
         Ok(view.ready(ctx, now).len())
     }
 
+    /// Items whose dependencies are not all submitted yet.
+    pub fn waiting_count(&self, ctx: &ContextId, now: Now) -> Result<usize, Error> {
+        let view = self.view()?;
+        view.require_context(ctx)?;
+        Ok(view
+            .of_kind_in("item", ctx)
+            .into_iter()
+            .filter(|item| due_of(item).is_none_or(|due| due <= now))
+            .filter(|item| view.first_successor(item))
+            .filter(|item| !view.dependencies_met(item))
+            .filter(|item| {
+                !view
+                    .claims_on(&item.id)
+                    .iter()
+                    .any(|(_, outcome)| *outcome == Some(SUBMITTED))
+            })
+            .count())
+    }
+
+    /// Items finished by a normal submit, excluding blocked attempts.
+    pub fn submitted_count(&self, ctx: &ContextId) -> Result<usize, Error> {
+        let view = self.view()?;
+        view.require_context(ctx)?;
+        Ok(view
+            .of_kind_in("item", ctx)
+            .into_iter()
+            .filter(|item| {
+                view.claims_on(&item.id)
+                    .iter()
+                    .any(|(_, outcome)| *outcome == Some(SUBMITTED))
+            })
+            .count())
+    }
+
     /// Claim the oldest ready item for `lease`, with a deadline `ttl` seconds
     /// from `now`. `None` when nothing is ready.
     pub fn pull(
@@ -1132,6 +1181,7 @@ impl ContextStore {
         self.submit_checked(None, claim, submission, now)
     }
 
+    // implements: 8c1fc5e54c5e48bb4086bd6b27a2d09bf41e100de7c743c6b04fd44b48af3d54
     fn submit_checked(
         &self,
         lease: Option<&str>,
@@ -1174,46 +1224,53 @@ impl ContextStore {
             (None, false) => {}
         }
         let snoozed = self.item_of(item_event)?;
+        let blocked = !submission.blocked_on.is_empty();
+        if blocked && is_check {
+            return Err(Error::InvalidCheck(
+                "a check closes with a verdict, not a blocked submission".into(),
+            ));
+        }
+        view.validate_dependencies(&ctx, &submission.blocked_on, Some(&item))?;
 
-        // The new head must build on the head as it is now: every tip, if
-        // two submits raced and forked it.
         let tips = view.tips(&ctx)?;
         let current: Vec<String> = tips.iter().map(|e| e.hash.clone()).collect();
-        let mut base = submission
-            .base
-            .clone()
-            .unwrap_or_else(|| base_of(claim_event));
-        base.sort();
-        let mut now_sorted = current.clone();
-        now_sorted.sort();
-        // A claim taken before claims recorded their base has none (a live
-        // context always has a tip): there is nothing to check it against.
-        let recorded = !base.is_empty();
-        if recorded && base != now_sorted {
-            return Err(Error::HeadMoved {
-                claim: claim.0.clone(),
-                current,
-            });
-        }
-        // An unchanged head over a single tip needs no new version. Anything
-        // else is written: the claim's marker makes the bytes new, so a head
-        // that returns to an earlier version's text cannot loop the history,
-        // and a fork always closes.
-        let unchanged = match tips.as_slice() {
-            [only] if self.head_of(only)?.body == submission.head => Some(only.hash.clone()),
-            _ => None,
-        };
-        let head_version = match unchanged {
-            Some(version) => version,
-            None => {
-                self.put(
-                    "markdown",
-                    head_content(&claim.0, &submission.head),
-                    meta([(KIND, "head"), (CLAIM, &claim.0)]),
-                    Some((ctx.0.clone(), current)),
-                    now,
-                )?
-                .hash
+        let head_version = if blocked {
+            current
+                .first()
+                .cloned()
+                .ok_or_else(|| Error::Kinora("a live context has no head".into()))?
+        } else {
+            // The new head must build on every current tip, closing any fork.
+            let mut base = submission
+                .base
+                .clone()
+                .unwrap_or_else(|| base_of(claim_event));
+            base.sort();
+            let mut now_sorted = current.clone();
+            now_sorted.sort();
+            // A claim taken before claims recorded their base has none.
+            if !base.is_empty() && base != now_sorted {
+                return Err(Error::HeadMoved {
+                    claim: claim.0.clone(),
+                    current,
+                });
+            }
+            let unchanged = match tips.as_slice() {
+                [only] if self.head_of(only)?.body == submission.head => Some(only.hash.clone()),
+                _ => None,
+            };
+            match unchanged {
+                Some(version) => version,
+                None => {
+                    self.put(
+                        "markdown",
+                        head_content(&claim.0, &submission.head),
+                        meta([(KIND, "head"), (CLAIM, &claim.0)]),
+                        Some((ctx.0.clone(), current)),
+                        now,
+                    )?
+                    .hash
+                }
             }
         };
 
@@ -1237,6 +1294,17 @@ impl ContextStore {
                 one_line(&close.note)
             ));
         }
+        if blocked {
+            content.push_str(&format!(
+                "\n## Blocked\n\nwaiting on: {}\n",
+                submission
+                    .blocked_on
+                    .iter()
+                    .map(|id| id.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
         let cited = checked.kinos().join(",");
         let mut metadata = meta([
             (KIND, "submission"),
@@ -1249,6 +1317,17 @@ impl ContextStore {
         ]);
         if let Some(verdict) = &verdict {
             metadata.insert(VERDICT.to_owned(), verdict.clone());
+        }
+        if blocked {
+            metadata.insert(
+                BLOCKED_ON.to_owned(),
+                submission
+                    .blocked_on
+                    .iter()
+                    .map(|id| id.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
         let born = self.put("markdown", content.into_bytes(), metadata, None, now)?;
         // A snooze looks again later: the same check, due then — queued
@@ -1272,13 +1351,21 @@ impl ContextStore {
                         Some(until),
                         snoozed.check.as_ref(),
                         Some(&snoozed.id),
+                        &[],
                         now,
                     )?),
                 }
             }
             _ => None,
         };
-        self.settle(&ctx, claim, SUBMITTED, now)?;
+        self.settle(
+            &ctx,
+            claim,
+            &item,
+            if blocked { BLOCKED } else { SUBMITTED },
+            &submission.blocked_on,
+            now,
+        )?;
         Ok(Submitted {
             id: SubmissionId(born.id),
             downgraded: checked.downgraded,
@@ -1298,7 +1385,8 @@ impl ContextStore {
         let claim_event = view.live_claim(claim, now)?;
         held_by_lease(claim_event, claim, lease)?;
         let ctx = ContextId(field(claim_event, CONTEXT).to_owned());
-        self.settle(&ctx, claim, RELEASED, now)
+        let item = field(claim_event, ITEM).to_owned();
+        self.settle(&ctx, claim, &item, RELEASED, &[], now)
     }
 
     /// The lease a claim was taken by.
@@ -1425,22 +1513,30 @@ impl ContextStore {
         &self,
         ctx: &ContextId,
         claim: &ClaimId,
+        item: &str,
         outcome: &str,
+        blocked_on: &[ItemId],
         now: Now,
     ) -> Result<(), Error> {
         let content = format!("kudo settle\nclaim: {}\noutcome: {outcome}\n", claim.0);
-        self.put(
-            "text",
-            content.into_bytes(),
-            meta([
-                (KIND, "settle"),
-                (CONTEXT, &ctx.0),
-                (CLAIM, &claim.0),
-                (OUTCOME, outcome),
-            ]),
-            None,
-            now,
-        )?;
+        let mut metadata = meta([
+            (KIND, "settle"),
+            (CONTEXT, &ctx.0),
+            (CLAIM, &claim.0),
+            (ITEM, item),
+            (OUTCOME, outcome),
+        ]);
+        if !blocked_on.is_empty() {
+            metadata.insert(
+                BLOCKED_ON.to_owned(),
+                blocked_on
+                    .iter()
+                    .map(|id| id.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        }
+        self.put("text", content.into_bytes(), metadata, None, now)?;
         Ok(())
     }
 
@@ -1492,6 +1588,10 @@ impl ContextStore {
             seq: seq_of(event),
             ask: strip_marker(&self.read(&event.hash)?),
             due: due_of(event),
+            after: split_ids(field(event, AFTER))
+                .into_iter()
+                .map(|id| ItemId(id.to_owned()))
+                .collect(),
             check: (field(event, CHECK) == "true").then(|| crate::Check {
                 what: String::new(),
                 pass: field(event, CHECK_PASS).to_owned(),
@@ -1699,6 +1799,66 @@ impl View {
             .collect()
     }
 
+    fn validate_dependencies(
+        &self,
+        ctx: &ContextId,
+        deps: &[ItemId],
+        claimed: Option<&str>,
+    ) -> Result<(), Error> {
+        let mut seen = std::collections::HashSet::new();
+        for dep in deps {
+            if claimed == Some(dep.0.as_str()) {
+                return Err(Error::InvalidDependency(
+                    "an item cannot wait on itself".into(),
+                ));
+            }
+            if !seen.insert(&dep.0) {
+                return Err(Error::InvalidDependency(format!(
+                    "{} is named more than once",
+                    dep.0
+                )));
+            }
+            let Some(event) = self.by_id.get(&dep.0).and_then(|events| events.first()) else {
+                return Err(Error::InvalidDependency(format!("no item {}", dep.0)));
+            };
+            if field(event, KIND) != "item" || field(event, CONTEXT) != ctx.0 {
+                return Err(Error::InvalidDependency(format!(
+                    "{} is not an item in context {}",
+                    dep.0, ctx.0
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn waiting_on(&self, item: &Event) -> Vec<String> {
+        let mut deps: Vec<String> = split_ids(field(item, AFTER))
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        for event in self.by_id.values().filter_map(|events| events.first()) {
+            if field(event, KIND) == "settle"
+                && field(event, ITEM) == item.id
+                && field(event, OUTCOME) == BLOCKED
+            {
+                deps.extend(
+                    split_ids(field(event, BLOCKED_ON))
+                        .into_iter()
+                        .map(str::to_owned),
+                );
+            }
+        }
+        deps
+    }
+
+    fn dependencies_met(&self, item: &Event) -> bool {
+        self.waiting_on(item).into_iter().all(|dep| {
+            self.claims_on(&dep)
+                .iter()
+                .any(|(_, outcome)| *outcome == Some(SUBMITTED))
+        })
+    }
+
     /// The oldest ready item under `ctx` and the attempt its next claim takes.
     fn next_ready(&self, ctx: &ContextId, now: Now) -> Option<(&Event, u32)> {
         self.ready(ctx, now).into_iter().next()
@@ -1712,6 +1872,7 @@ impl View {
             .into_iter()
             // Not before its time (kudo::queue::due-items).
             .filter(|item| due_of(item).is_none_or(|due| due <= now))
+            .filter(|item| self.dependencies_met(item))
             .filter(|item| self.first_successor(item))
             .collect();
         // What came due first goes first (it was scheduled); then items with
@@ -1976,6 +2137,10 @@ fn excerpt(text: &str, keep: usize) -> String {
         tail - head,
         &text[tail..]
     )
+}
+
+fn split_ids(text: &str) -> Vec<&str> {
+    text.split(',').filter(|id| !id.is_empty()).collect()
 }
 
 /// An item's due time, if it has one.

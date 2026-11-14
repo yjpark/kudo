@@ -95,10 +95,23 @@ pub fn submit(
             Err(Error::HeadMoved { current, .. }) => return Err(moved(&store, claim, &current)),
             Err(e) => return Err(e.to_string()),
         };
-    let mut reply = format!(
-        "Submitted {} for claim {claim}; the head is superseded.",
-        done.id.0
-    );
+    let mut reply = if submission.blocked_on.is_empty() {
+        format!(
+            "Submitted {} for claim {claim}; the head is superseded.",
+            done.id.0
+        )
+    } else {
+        format!(
+            "Blocked {} for claim {claim}; the head is unchanged and the item waits for {}.",
+            done.id.0,
+            submission
+                .blocked_on
+                .iter()
+                .map(|id| id.0.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     if !done.downgraded.is_empty() {
         reply.push_str(
             "\n\nThese established lines landed as claimed — none of their evidence \

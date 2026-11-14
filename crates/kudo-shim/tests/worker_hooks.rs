@@ -167,7 +167,12 @@ fn session_end_settles_the_lease_without_handing_off_more_work() {
 
     let ended = hook::run("session-end", &event("SessionEnd", ""), &s, T0 + 1);
     assert_eq!(ended, HookReply::quiet());
-    assert!(store.held_by(&s.context, &s.lease, T0 + 1).unwrap().is_none());
+    assert!(
+        store
+            .held_by(&s.context, &s.lease, T0 + 1)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(hook::run("stop", &event("Stop", ""), &s, T0 + 2).stdout, "");
 }
 
