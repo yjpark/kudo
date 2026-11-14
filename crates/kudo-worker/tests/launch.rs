@@ -46,7 +46,7 @@ fn the_cli_starts_under_the_lease_with_the_kickoff_prompt() {
 }
 
 #[test]
-fn the_settings_install_all_four_hooks_through_the_shim() {
+fn the_settings_install_all_five_hooks_through_the_shim() {
     let p = plan(
         &setup("l"),
         "claude",
@@ -57,6 +57,7 @@ fn the_settings_install_all_four_hooks_through_the_shim() {
     let settings: Value = serde_json::from_str(flag(&p.argv, "--settings")).unwrap();
     for (event, arg) in [
         ("SessionStart", "session-start"),
+        ("PreToolUse", "pre-tool-use"),
         ("Stop", "stop"),
         ("PreCompact", "pre-compact"),
         ("UserPromptSubmit", "user-prompt-submit"),
@@ -80,6 +81,13 @@ fn the_settings_install_all_four_hooks_through_the_shim() {
     assert!(
         timeout >= kudo_worker::env::WAIT_WINDOW + 30,
         "Stop hook timeout {timeout}s"
+    );
+    let approval_timeout = settings["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"]
+        .as_i64()
+        .unwrap_or(0);
+    assert!(
+        approval_timeout > kudo_context::MCP_APPROVAL_TIMEOUT,
+        "PreToolUse timeout {approval_timeout}s"
     );
 }
 
